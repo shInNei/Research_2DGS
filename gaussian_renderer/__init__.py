@@ -18,10 +18,15 @@ from utils.point_utils import depth_to_normal
 from utils.general_utils import build_rotation
 
 def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
+    # Flip normal if it faces away from the viewer (double-sided rendering)
+    v_z_raw = (v_dir * n).sum(dim=-1, keepdim=True)
+    sign = torch.where(v_z_raw >= 0.0, 1.0, -1.0)
+    n = n * sign
+
     # 1. Project vectors to local tangent space
     v_x = (v_dir * t_x).sum(dim=-1, keepdim=True)
     v_y = (v_dir * t_y).sum(dim=-1, keepdim=True)
-    v_z = (v_dir * n).sum(dim=-1, keepdim=True)
+    v_z = v_z_raw * sign
     
     l_x = (l_dir * t_x).sum(dim=-1, keepdim=True)
     l_y = (l_dir * t_y).sum(dim=-1, keepdim=True)
