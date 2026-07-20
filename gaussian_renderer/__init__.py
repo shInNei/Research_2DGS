@@ -75,7 +75,7 @@ def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
     cos_l = torch.clamp(l_z, min=0.0)
     cos_v = torch.clamp(v_z, min=1e-3)
     
-    diffuse = (albedo / math.pi) * (1.0 - metallic) * cos_l
+    diffuse = albedo * (1.0 - metallic) * cos_l
     specular = (D * G_2 * F) / (4.0 * cos_v)
     
     shaded_colors = diffuse + specular

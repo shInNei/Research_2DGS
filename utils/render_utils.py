@@ -209,7 +209,7 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
   idx_to_str = lambda idx: str(idx).zfill(zpad)
 
   os.makedirs(base_dir, exist_ok=True)
-  render_dist_curve_fn = np.log
+  render_dist_curve_fn = lambda x: np.log(np.maximum(x, 1e-5))
   
   # Load one example frame to get image shape and depth range.
   depth_file = os.path.join(input_dir, 'vis', f'depth_{idx_to_str(0)}.tiff')
