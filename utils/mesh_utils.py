@@ -90,10 +90,11 @@ class GaussianExtractor(object):
     @torch.no_grad()
     def clean(self):
         self.depthmaps = []
-        # self.alphamaps = []
         self.rgbmaps = []
-        # self.normals = []
-        # self.depth_normals = []
+        self.normals = []
+        self.albedomaps = []
+        self.roughnessmaps = []
+        self.metallicmaps = []
         self.viewpoint_stack = []
 
     @torch.no_grad()
@@ -109,12 +110,24 @@ class GaussianExtractor(object):
             alpha = render_pkg['rend_alpha']
             normal = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0)
             depth = render_pkg['surf_depth']
-            depth_normal = render_pkg['surf_normal']
+            
+            # Render material channels using override_color
+            albedo = self.render(viewpoint_cam, self.gaussians, override_color=self.gaussians.get_base_color)["render"]
+            
+            # Roughness: concat roughness_x (col 0) and roughness_y (col 1) with 0 to get 3 channels
+            roughness_rgb = torch.cat([self.gaussians.get_roughness, torch.zeros_like(self.gaussians.get_roughness[:, :1])], dim=-1)
+            roughness = self.render(viewpoint_cam, self.gaussians, override_color=roughness_rgb)["render"]
+            
+            # Metallic: repeat 1 channel to 3 channels
+            metallic_rgb = self.gaussians.get_metallic.repeat(1, 3)
+            metallic = self.render(viewpoint_cam, self.gaussians, override_color=metallic_rgb)["render"]
+            
             self.rgbmaps.append(rgb.cpu())
             self.depthmaps.append(depth.cpu())
-            # self.alphamaps.append(alpha.cpu())
-            # self.normals.append(normal.cpu())
-            # self.depth_normals.append(depth_normal.cpu())
+            self.normals.append(normal.cpu())
+            self.albedomaps.append(albedo.cpu())
+            self.roughnessmaps.append(roughness.cpu())
+            self.metallicmaps.append(metallic.cpu())
         
         # self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
         # self.depthmaps = torch.stack(self.depthmaps, dim=0)
@@ -291,5 +304,9 @@ class GaussianExtractor(object):
             save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
             save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
             save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
-            # save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
-            # save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'depth_normal_{0:05d}'.format(idx) + ".png"))
+            
+            # Save material property maps
+            save_img_u8(np.clip(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, 0.0, 1.0), os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
+            save_img_u8(np.clip(self.albedomaps[idx].permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'albedo_{0:05d}'.format(idx) + ".png"))
+            save_img_u8(np.clip(self.roughnessmaps[idx].permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'roughness_{0:05d}'.format(idx) + ".png"))
+            save_img_u8(np.clip(self.metallicmaps[idx].permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'metallic_{0:05d}'.format(idx) + ".png"))
