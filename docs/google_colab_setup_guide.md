@@ -43,14 +43,17 @@ Check if the GPU is active and CUDA compiler is available:
 Clone the repository, making sure to fetch the C++ submodules recursively:
 ```bash
 # Replace with your actual GitHub repository URL
-!git clone --recursive https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git relightable2DGS
+!git clone --recursive https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git /content/Research_2DGS
 ```
 
 ### Cell 3: Install Dependencies & Compile Submodules
-Install the necessary python packages and build the custom CUDA submodules:
+Install the necessary python packages, **patch the CUB/FLT_MAX issue**, and build the custom CUDA submodules:
 ```bash
-%cd relightable2DGS
+%cd /content/Research_2DGS
 !pip install plyfile opencv-python lpips trimesh open3d tqdm
+
+# Patch simple-knn compiling issue (FLT_MAX not found on modern compilers)
+!python -c "with open('submodules/simple-knn/simple_knn.cu', 'r+') as f: c = f.read(); f.seek(0); f.write('#include <cfloat>\n' + c)"
 
 # Compile CUDA rasterizer and KNN submodules
 !pip install submodules/diff-surfel-rasterization
@@ -60,6 +63,7 @@ Install the necessary python packages and build the custom CUDA submodules:
 ### Cell 4: Download Training Datasets (High-Speed GCS Mirror)
 We recommend using Google's official high-speed direct download links. They are extremely stable and will not hit rate limits:
 ```bash
+%cd /content/Research_2DGS
 # Create data folder
 !mkdir -p data
 %cd data
@@ -74,12 +78,13 @@ We recommend using Google's official high-speed direct download links. They are 
 !unzip -q nerf_synthetic.zip -d nerf_synthetic
 !rm nerf_synthetic.zip
 
-%cd ..
+%cd /content/Research_2DGS
 ```
 
 ### Cell 5: Run Training
 Start training on a selected scene (e.g. `helmet` from Shiny Blender, or `lego` from NeRF Synthetic):
 ```bash
+%cd /content/Research_2DGS
 # Train on Shiny Blender "helmet" scene
 !python train.py -s data/shiny_blender/helmet --model_path output/shiny_blender_helmet --eval
 
