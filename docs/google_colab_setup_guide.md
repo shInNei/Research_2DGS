@@ -69,9 +69,9 @@ We recommend using Google's official high-speed direct download links. They are 
 %cd data
 
 # Option A: Download Shiny Blender Dataset (Ref-NeRF) - Highly Recommended for Anisotropic/Specularity
-!wget https://storage.googleapis.com/gresearch/refnerf/shiny_blender.zip
-!unzip -q shiny_blender.zip -d shiny_blender
-!rm shiny_blender.zip
+!wget https://storage.googleapis.com/gresearch/refraw360/ref.zip
+!unzip -q ref.zip
+!rm ref.zip
 
 # Option B: Download Standard NeRF Synthetic Dataset (Lego, Drums, etc.)
 !wget https://storage.googleapis.com/gresearch/nerf/nerf_synthetic.zip
@@ -85,8 +85,8 @@ We recommend using Google's official high-speed direct download links. They are 
 Start training on a selected scene (e.g. `helmet` from Shiny Blender, or `lego` from NeRF Synthetic):
 ```bash
 %cd /content/Research_2DGS
-# Train on Shiny Blender "helmet" scene
-!python train.py -s data/shiny_blender/helmet --model_path output/shiny_blender_helmet --eval
+# Train on Shiny Blender "helmet" scene (extracted to 'data/ref/helmet')
+!python train.py -s data/ref/helmet --model_path output/shiny_blender_helmet --eval
 
 # OR: Train on standard NeRF Synthetic "lego" scene
 # !python train.py -s data/nerf_synthetic/lego --model_path output/nerf_synthetic_lego --eval
@@ -102,7 +102,7 @@ For testing Inverse Rendering, Relighting, and Anisotropic specular highlights, 
 *   **Best for**: Highly reflective, specular, or anisotropic surfaces (metals, glossy plastics).
 *   **Scenes**: `helmet`, `car`, `coffee`, `toaster`, `ball`, `teapot`.
 *   **Features**: These objects exhibit complex specular reflections and view-dependent highlights under a single light source, making them ideal to evaluate Anisotropic GGX vs. Isotropic GGX.
-*   **Download Link**: [https://storage.googleapis.com/gresearch/refnerf/shiny_blender.zip](https://storage.googleapis.com/gresearch/refnerf/shiny_blender.zip)
+*   **Download Link**: [https://storage.googleapis.com/gresearch/refraw360/ref.zip](https://storage.googleapis.com/gresearch/refraw360/ref.zip)
 
 ### B. TensoIR Synthetic
 *   **Best for**: Inverse rendering evaluations (extracting pure albedo, metallic, roughness under complex environment maps).
