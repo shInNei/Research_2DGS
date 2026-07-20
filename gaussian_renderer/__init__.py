@@ -15,6 +15,71 @@ from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRas
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
+from utils.general_utils import build_rotation
+
+def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
+    # 1. Project vectors to local tangent space
+    v_x = (v_dir * t_x).sum(dim=-1, keepdim=True)
+    v_y = (v_dir * t_y).sum(dim=-1, keepdim=True)
+    v_z = (v_dir * n).sum(dim=-1, keepdim=True)
+    
+    l_x = (l_dir * t_x).sum(dim=-1, keepdim=True)
+    l_y = (l_dir * t_y).sum(dim=-1, keepdim=True)
+    l_z = (l_dir * n).sum(dim=-1, keepdim=True)
+    
+    # Halfway vector
+    h_dir = v_dir + l_dir
+    h_dir = h_dir / (torch.norm(h_dir, dim=-1, keepdim=True) + 1e-6)
+    
+    h_x = (h_dir * t_x).sum(dim=-1, keepdim=True)
+    h_y = (h_dir * t_y).sum(dim=-1, keepdim=True)
+    h_z = (h_dir * n).sum(dim=-1, keepdim=True)
+    
+    # Get material parameters
+    albedo = pc.get_base_color # [N, 3]
+    metallic = pc.get_metallic # [N, 1]
+    roughness = pc.get_roughness # [N, 2]
+    
+    alpha_x = roughness[:, 0:1]
+    alpha_y = roughness[:, 1:2]
+    
+    # Remap roughness: standard GGX uses alpha = roughness^2
+    alpha_x = torch.clamp(alpha_x * alpha_x, min=0.001, max=1.0)
+    alpha_y = torch.clamp(alpha_y * alpha_y, min=0.001, max=1.0)
+    
+    # 2. Fresnel term F (Schlick)
+    F_0 = 0.04 * (1.0 - metallic) + albedo * metallic
+    v_dot_h = (v_dir * h_dir).sum(dim=-1, keepdim=True).clamp(0.0, 1.0)
+    F = F_0 + (1.0 - F_0) * torch.pow(1.0 - v_dot_h, 5)
+    
+    # 3. Normal Distribution Function D (Anisotropic GGX NDF)
+    h_z = torch.clamp(h_z, min=0.0)
+    term_ndf = (h_x * h_x) / (alpha_x * alpha_x) + (h_y * h_y) / (alpha_y * alpha_y) + h_z * h_z
+    D = (h_z > 0.0).float() / (math.pi * alpha_x * alpha_y * term_ndf * term_ndf + 1e-6)
+    
+    # 4. Height-correlated Smith Masking-Shadowing G_2
+    def get_lambda(omega_x, omega_y, omega_z):
+        omega_z_sq = torch.clamp(omega_z * omega_z, min=1e-6)
+        val = 1.0 + (alpha_x * alpha_x * omega_x * omega_x + alpha_y * alpha_y * omega_y * omega_y) / omega_z_sq
+        return (-1.0 + torch.sqrt(torch.clamp(val, min=0.0))) / 2.0
+    
+    v_z = torch.clamp(v_z, min=0.0)
+    l_z = torch.clamp(l_z, min=0.0)
+    
+    lambda_v = get_lambda(v_x, v_y, v_z)
+    lambda_l = get_lambda(l_x, l_y, l_z)
+    
+    G_2 = ((v_z > 0.0) & (l_z > 0.0)).float() / (1.0 + lambda_v + lambda_l + 1e-6)
+    
+    # 5. Combined Shading
+    cos_l = torch.clamp(l_z, min=0.0)
+    cos_v = torch.clamp(v_z, min=1e-3)
+    
+    diffuse = (albedo / math.pi) * (1.0 - metallic) * cos_l
+    specular = (D * G_2 * F) / (4.0 * cos_v)
+    
+    shaded_colors = diffuse + specular
+    return torch.clamp(shaded_colors, 0.0, 1.0)
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -77,20 +142,22 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = pc.get_scaling
         rotations = pc.get_rotation
     
-    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
-    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
-    pipe.convert_SHs_python = False
     shs = None
     colors_precomp = None
     if override_color is None:
-        if pipe.convert_SHs_python:
-            shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-            dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
-            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
-            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-        else:
-            shs = pc.get_features
+        # Calculate local tangent space
+        R = build_rotation(pc._rotation)
+        t_x = R[:, :, 0]
+        t_y = R[:, :, 1]
+        n = R[:, :, 2]
+        
+        # Calculate view and light direction
+        campos = viewpoint_camera.camera_center
+        dir_to_cam = campos.unsqueeze(0) - pc.get_xyz
+        v_dir = dir_to_cam / (torch.norm(dir_to_cam, dim=-1, keepdim=True) + 1e-6)
+        l_dir = v_dir # Colocated point light source
+        
+        colors_precomp = shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n)
     else:
         colors_precomp = override_color
     

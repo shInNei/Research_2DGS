@@ -58,8 +58,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
+        # (Commented out as we are using Anisotropic GGX PBR parameters instead of SH)
+        # if iteration % 1000 == 0:
+        #     gaussians.oneupSHdegree()
 
         # Pick a random Camera
         if not viewpoint_stack:
