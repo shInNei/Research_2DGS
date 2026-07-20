@@ -53,7 +53,7 @@ Install the necessary python packages, **patch the CUB/FLT_MAX issue**, and buil
 !pip install plyfile opencv-python lpips trimesh open3d tqdm
 
 # Patch simple-knn compiling issue (FLT_MAX not found on modern compilers)
-!python -c "with open('submodules/simple-knn/simple_knn.cu', 'r+') as f: c = f.read(); f.seek(0); f.write('#include <cfloat>\n' + c)"
+!python -c "with open('submodules/simple-knn/simple_knn.cu', 'r+') as f: c = f.read(); f.write('#include <cfloat>\n' + c)"
 
 # Compile CUDA rasterizer and KNN submodules
 !pip install submodules/diff-surfel-rasterization
@@ -85,11 +85,24 @@ We recommend using Google's official high-speed direct download links. They are 
 Start training on a selected scene (e.g. `helmet` from Shiny Blender, or `lego` from NeRF Synthetic):
 ```bash
 %cd /content/Research_2DGS
-# Train on Shiny Blender "helmet" scene (extracted to 'data/ref/helmet')
-!python train.py -s data/ref/helmet --model_path output/shiny_blender_helmet --eval
+# Train on Shiny Blender "helmet" scene (extracted to 'data/refnerf/helmet')
+!python train.py -s data/refnerf/helmet --model_path output/shiny_blender_helmet --eval
 
 # OR: Train on standard NeRF Synthetic "lego" scene
 # !python train.py -s data/nerf_synthetic/lego --model_path output/nerf_synthetic_lego --eval
+```
+
+### Cell 6: Mount Google Drive & Backup Outputs
+Run this to mount Google Drive and back up the training results (`output/` folder) to prevent data loss:
+```python
+# 1. Mount Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
+```
+```bash
+# 2. Copy the training outputs to Google Drive
+!mkdir -p /content/drive/MyDrive/Research_2DGS_outputs/
+!cp -r /content/Research_2DGS/output/* /content/drive/MyDrive/Research_2DGS_outputs/
 ```
 
 ---
