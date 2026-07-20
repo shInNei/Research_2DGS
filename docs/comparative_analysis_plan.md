@@ -15,12 +15,13 @@ To demonstrate the scientific value of this work, we will compare our pipeline a
 
 ### B. Isotropic PBR Relighting Baselines (Our Core Novelty Evaluation)
 *   **Isotropic 2DGS (Ours - Ablated)**: Restricting our model to a single roughness parameter ($\alpha_x = \alpha_y$).
-*   **Relightable 3DGS (R3DG) / GS-IR**: Popular 3DGS inverse rendering pipelines that use Isotropic GGX shading.
-*   *Purpose*: Directly validate the hypothesis that **anisotropic parameterization ($\alpha_x, \alpha_y$) in the 2D tangent space** is necessary to accurately reconstruct specular highlights on complex, brushed, or directional materials.
+*   **Relightable 3DGS (R3DG) / GS-IR (CVPR 2024)**: Popular 3DGS inverse rendering pipelines that use Isotropic GGX shading.
+*   **DeferredGS / RGS-DR (2025/2026)**: Current State-of-the-Art surfel-based (2DGS) PBR relighting pipelines that render G-buffers for deferred shading but are limited to Isotropic BRDFs.
+*   *Purpose*: Directly validate the hypothesis that **anisotropic parameterization ($\alpha_x, \alpha_y$) in the 2D tangent space** is necessary to accurately reconstruct specular highlights on complex, brushed, or directional materials, which is currently unsupported by SOTA 2025/2026 pipelines.
 
 ### C. Geometry-Guided Inverse Rendering Baselines (SOTA Comparison)
-*   **GeoSplatting (ICCV 2025)**: Current SOTA that utilizes optimized mesh-guided normals to solve the "noisy normal" issue in 3DGS.
-*   *Purpose*: Demonstrate that 2DGS naturally yields superior geometric normals and tangent fields than 3DGS, resulting in higher-fidelity material maps.
+*   **GeoSplatting (ICCV 2025)**: SOTA 3DGS pipeline that utilizes optimized mesh-guided normals to solve the "noisy normal" issue in 3DGS.
+*   *Purpose*: Demonstrate that our 2DGS foundation naturally yields superior geometric normals and tangent fields compared to 3DGS, matching or exceeding GeoSplatting's quality without needing explicit mesh guidance.
 
 ---
 
