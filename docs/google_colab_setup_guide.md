@@ -50,10 +50,10 @@ Clone the repository, making sure to fetch the C++ submodules recursively:
 Install the necessary python packages, **patch the CUB/FLT_MAX issue**, and build the custom CUDA submodules:
 ```bash
 %cd /content/Research_2DGS
-!pip install plyfile opencv-python lpips trimesh open3d tqdm
+!pip install plyfile opencv-python lpips trimesh open3d tqdm mediapy
 
 # Patch simple-knn compiling issue (FLT_MAX not found on modern compilers)
-!python -c "with open('submodules/simple-knn/simple_knn.cu', 'r+') as f: c = f.read(); f.write('#include <cfloat>\n' + c)"
+!python -c "with open('submodules/simple-knn/simple_knn.cu', 'r+') as f: c = f.read(); f.seek(0); f.write('#include <cfloat>\n' + c)"
 
 # Compile CUDA rasterizer and KNN submodules
 !pip install submodules/diff-surfel-rasterization
