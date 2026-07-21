@@ -86,13 +86,13 @@ def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
     shaded_colors = diffuse + specular
     return torch.clamp(shaded_colors, 0.0, 1.0)
 
-def shade_anisotropic_ggx_env(pc, v_dir, t_x, t_y, n):
-    # Flip normal if it faces away from the viewer (double-sided rendering)
-    v_z_raw = (v_dir * n).sum(dim=-1, keepdim=True)
-    sign = torch.where(v_z_raw >= 0.0, 1.0, -1.0)
-    n = n * sign
-    v_z = v_z_raw * sign
-
+def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
+    # 1. Flip normal if it faces away from viewer
+    v_z = (v_dir * n).sum(dim=-1, keepdim=True)
+    sign = torch.where(v_z >= 0.0, 1.0, -1.0)
+    normal = n * sign
+    v_z = v_z * sign
+    
     # Get material parameters
     albedo = pc.get_base_color # [N, 3]
     metallic = pc.get_metallic # [N, 1]
@@ -100,40 +100,40 @@ def shade_anisotropic_ggx_env(pc, v_dir, t_x, t_y, n):
     
     alpha_x = roughness[:, 0:1]
     alpha_y = roughness[:, 1:2]
-    
     alpha_x = torch.clamp(alpha_x * alpha_x, min=0.001, max=1.0)
     alpha_y = torch.clamp(alpha_y * alpha_y, min=0.001, max=1.0)
-    
-    # 1. Diffuse component
-    # We evaluate the global environment map (pc.env_sh) at the normal direction
-    # env_sh shape: [9, 3] -> transpose to [3, 9] -> unsqueeze to [1, 3, 9] -> expand to [N, 3, 9]
-    N = n.shape[0]
-    sh_coeffs = pc.env_sh.T.unsqueeze(0).expand(N, -1, -1)
-    
-    diffuse_light = eval_sh(2, sh_coeffs, n)
-    diffuse_light = torch.clamp(diffuse_light, min=0.0)
-    diffuse = albedo * (1.0 - metallic) * diffuse_light
-
-    # 2. Specular component
-    # Reflection vector
-    r = 2.0 * v_z * n - v_dir
-    r = r / (torch.norm(r, dim=-1, keepdim=True) + 1e-6)
-    
-    # Roughness-dependent scale factors for SH bands
     alpha = torch.sqrt(alpha_x * alpha_y)
-    scale_0 = torch.ones_like(alpha)
-    scale_1 = torch.exp(-1.0 * alpha * alpha)
-    scale_2 = torch.exp(-3.0 * alpha * alpha)
     
-    scales = torch.cat([
-        scale_0, # l=0 (1 coeff)
-        scale_1, scale_1, scale_1, # l=1 (3 coeffs)
-        scale_2, scale_2, scale_2, scale_2, scale_2 # l=2 (5 coeffs)
-    ], dim=-1).unsqueeze(1) # shape [N, 1, 9]
+    # Normalize SG directions and clamp sharpness/colors
+    sg_dir = torch.nn.functional.normalize(pc.sg_dir, dim=-1) # [M, 3]
+    sg_sharp = torch.clamp(pc.sg_sharp, min=0.1, max=1000.0) # [M, 1]
+    sg_color = torch.clamp(pc.sg_color, min=0.0) # [M, 3]
     
-    sh_coeffs_specular = sh_coeffs * scales
-    specular_light = eval_sh(2, sh_coeffs_specular, r)
-    specular_light = torch.clamp(specular_light, min=0.0)
+    # 2. DIFFUSE SHADING (Cosine Convolution with SGs)
+    normal_dot_dir = normal @ sg_dir.T # [N, M]
+    cos_term = torch.clamp(normal_dot_dir, min=0.0)
+    sg_integral = (2.0 * math.pi / sg_sharp.T) * (1.0 - torch.exp(-2.0 * sg_sharp.T)) # [1, M]
+    diffuse_light = (cos_term * sg_integral) @ sg_color # [N, 3]
+    
+    diffuse = albedo * (1.0 - metallic) * diffuse_light
+    
+    # 3. SPECULAR SHADING (Isotropic analytical SG Specular Convolution)
+    r = 2.0 * v_z * normal - v_dir
+    r = torch.nn.functional.normalize(r, dim=-1)
+    
+    # Specular lobe sharpness: lambda_spec = 2 / (alpha^2)
+    lambda_spec = 2.0 / (alpha * alpha + 1e-5) # [N, 1]
+    
+    # Analytical SG Specular Convolution:
+    r_dot_dir = r @ sg_dir.T # [N, M]
+    sharp_env = sg_sharp.T # [1, M]
+    lambda_total = sharp_env + lambda_spec # [N, M]
+    
+    exp_factor = (sharp_env * lambda_spec / lambda_total) * (r_dot_dir - 1.0)
+    exp_factor = torch.clamp(exp_factor, min=-40.0, max=0.0)
+    
+    spec_intensity = (2.0 * math.pi / lambda_total) * torch.exp(exp_factor) # [N, M]
+    specular_light = spec_intensity @ sg_color # [N, 3]
     
     # Lazarov/UE4 Split-Sum envBRDF approximation
     F_0 = 0.04 * (1.0 - metallic) + albedo * metallic
@@ -218,10 +218,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     shs = None
     colors_precomp = None
     if override_color is None:
-        # Calculate local tangent space
+        # Calculate normal
         R = build_rotation(pc._rotation)
-        t_x = R[:, :, 0]
-        t_y = R[:, :, 1]
         n = R[:, :, 2]
         
         # Calculate view direction
@@ -229,7 +227,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         dir_to_cam = campos.unsqueeze(0) - pc.get_xyz
         v_dir = dir_to_cam / (torch.norm(dir_to_cam, dim=-1, keepdim=True) + 1e-6)
         
-        colors_precomp = shade_anisotropic_ggx_env(pc, v_dir, t_x, t_y, n)
+        colors_precomp = shade_anisotropic_ggx_sg_point(pc, v_dir, n)
     else:
         colors_precomp = override_color
     

@@ -11,6 +11,7 @@
 
 import torch
 import numpy as np
+import math
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import os
@@ -55,8 +56,8 @@ class GaussianModel:
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
         self._base_color = torch.empty(0)
-        self._metallic = torch.empty(0)
-        self._roughness = torch.empty(0)
+        self._material_weights = torch.empty(0)
+        self.material_palette = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
@@ -68,18 +69,31 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
-        # Global environment lighting Spherical Harmonics coefficients (degree 2 -> 9 coefficients)
-        env_sh_init = torch.zeros((9, 3), dtype=torch.float32, device="cuda")
-        env_sh_init[0, :] = 1.0 / 0.28209479177387814
-        self.env_sh = nn.Parameter(env_sh_init.requires_grad_(True))
+        # Initialize global Spherical Gaussian (SG) Mixture envmap (M = 24)
+        M = 24
+        indices = torch.arange(0, M, dtype=torch.float32)
+        phi = torch.arccos(1.0 - 2.0 * (indices + 0.5) / M)
+        theta = math.pi * (1.0 + 5.0**0.5) * indices
+        
+        x = torch.sin(phi) * torch.cos(theta)
+        y = torch.sin(phi) * torch.sin(theta)
+        z = torch.cos(phi)
+        
+        sg_dir_init = torch.stack([x, y, z], dim=-1).cuda()
+        sg_sharp_init = torch.ones((M, 1), dtype=torch.float32, device="cuda") * 10.0
+        sg_color_init = torch.ones((M, 3), dtype=torch.float32, device="cuda") * 0.5
+        
+        self.sg_dir = nn.Parameter(sg_dir_init.requires_grad_(True))
+        self.sg_sharp = nn.Parameter(sg_sharp_init.requires_grad_(True))
+        self.sg_color = nn.Parameter(sg_color_init.requires_grad_(True))
 
     def capture(self):
         return (
             self.active_sh_degree,
             self._xyz,
             self._base_color,
-            self._metallic,
-            self._roughness,
+            self._material_weights,
+            self.material_palette,
             self._scaling,
             self._rotation,
             self._opacity,
@@ -88,16 +102,18 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
-            self.env_sh,
+            self.sg_dir,
+            self.sg_sharp,
+            self.sg_color,
         )
     
     def restore(self, model_args, training_args):
-        if len(model_args) == 14:
+        if len(model_args) == 16:
             (self.active_sh_degree, 
             self._xyz, 
             self._base_color, 
-            self._metallic,
-            self._roughness,
+            self._material_weights,
+            self.material_palette,
             self._scaling, 
             self._rotation, 
             self._opacity,
@@ -106,8 +122,14 @@ class GaussianModel:
             denom,
             opt_dict, 
             self.spatial_lr_scale,
-            env_sh) = model_args
-            self.env_sh.data.copy_(env_sh)
+            sg_dir,
+            sg_sharp,
+            sg_color) = model_args
+            
+            self.sg_dir.data.copy_(sg_dir)
+            self.sg_sharp.data.copy_(sg_sharp)
+            self.sg_color.data.copy_(sg_color)
+            self.material_palette.data.copy_(self.material_palette)
         else:
             (self.active_sh_degree, 
             self._xyz, 
@@ -121,7 +143,13 @@ class GaussianModel:
             xyz_gradient_accum, 
             denom,
             opt_dict, 
-            self.spatial_lr_scale) = model_args
+            self.spatial_lr_scale) = model_args[:14]
+            K = 16
+            palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
+            torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
+            self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
+            self._material_weights = nn.Parameter(torch.zeros((self._xyz.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
@@ -145,11 +173,15 @@ class GaussianModel:
 
     @property
     def get_metallic(self):
-        return self.metallic_activation(self._metallic)
+        palette_activated = torch.sigmoid(self.material_palette)
+        weights = torch.softmax(self._material_weights, dim=-1)
+        return (weights @ palette_activated)[:, 2:3]
 
     @property
     def get_roughness(self):
-        return self.roughness_activation(self._roughness)
+        palette_activated = torch.sigmoid(self.material_palette)
+        weights = torch.softmax(self._material_weights, dim=-1)
+        return (weights @ palette_activated)[:, 0:2]
     
     @property
     def get_opacity(self):
@@ -178,21 +210,21 @@ class GaussianModel:
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        metallic = self.metallic_inverse_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        roughness = self.roughness_inverse_activation(0.5 * torch.ones((fused_point_cloud.shape[0], 2), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._base_color = nn.Parameter(base_color.requires_grad_(True))
-        self._metallic = nn.Parameter(metallic.requires_grad_(True))
-        self._roughness = nn.Parameter(roughness.requires_grad_(True))
+        
+        # Initialize K = 16 material palette and weights
+        K = 16
+        palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
+        torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
+        self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
+        self._material_weights = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+        
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-        env_sh_init = torch.zeros((9, 3), dtype=torch.float32, device="cuda")
-        env_sh_init[0, :] = 1.0 / 0.28209479177387814
-        self.env_sh = nn.Parameter(env_sh_init.requires_grad_(True))
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -202,12 +234,14 @@ class GaussianModel:
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._base_color], 'lr': training_args.feature_lr, "name": "base_color"},
-            {'params': [self._metallic], 'lr': training_args.opacity_lr, "name": "metallic"},
-            {'params': [self._roughness], 'lr': training_args.opacity_lr, "name": "roughness"},
+            {'params': [self._material_weights], 'lr': training_args.feature_lr, "name": "material_weights"},
+            {'params': [self.material_palette], 'lr': training_args.feature_lr, "name": "material_palette"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-            {'params': [self.env_sh], 'lr': 0.01, "name": "env_sh"}
+            {'params': [self.sg_dir], 'lr': 0.0025, "name": "sg_dir"},
+            {'params': [self.sg_sharp], 'lr': 0.01, "name": "sg_sharp"},
+            {'params': [self.sg_color], 'lr': 0.0025, "name": "sg_color"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -229,7 +263,7 @@ class GaussianModel:
         for i in range(self._base_color.shape[1]):
             l.append('base_color_{}'.format(i))
         l.append('metallic')
-        for i in range(self._roughness.shape[1]):
+        for i in range(2):
             l.append('roughness_{}'.format(i))
         l.append('opacity')
         for i in range(self._scaling.shape[1]):
@@ -244,8 +278,8 @@ class GaussianModel:
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         base_color = self._base_color.detach().cpu().numpy()
-        metallic = self._metallic.detach().cpu().numpy()
-        roughness = self._roughness.detach().cpu().numpy()
+        metallic = self.get_metallic.detach().cpu().numpy()
+        roughness = self.get_roughness.detach().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
@@ -285,20 +319,6 @@ class GaussianModel:
             rgb = np.clip(features_dc * 0.28209479177387814 + 0.5, 0.001, 0.999)
             base_color = np.log(rgb / (1.0 - rgb))
 
-        # Read metallic
-        if "metallic" in plydata.elements[0]:
-            metallic = np.asarray(plydata.elements[0]["metallic"])[..., np.newaxis]
-        else:
-            metallic = np.zeros((xyz.shape[0], 1))
-
-        # Read roughness
-        if "roughness_0" in plydata.elements[0]:
-            roughness = np.zeros((xyz.shape[0], 2))
-            roughness[:, 0] = np.asarray(plydata.elements[0]["roughness_0"])
-            roughness[:, 1] = np.asarray(plydata.elements[0]["roughness_1"])
-        else:
-            roughness = np.zeros((xyz.shape[0], 2))
-
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
         scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
         scales = np.zeros((xyz.shape[0], len(scale_names)))
@@ -313,8 +333,14 @@ class GaussianModel:
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._base_color = nn.Parameter(torch.tensor(base_color, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._metallic = nn.Parameter(torch.tensor(metallic, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
+        
+        # Initialize K = 16 material palette and weights since we are loading raw point cloud data
+        K = 16
+        palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
+        torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
+        self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
+        self._material_weights = nn.Parameter(torch.zeros((xyz.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+        
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -339,7 +365,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "env_sh":
+            if group["name"] in ["material_palette", "sg_dir", "sg_sharp", "sg_color"]:
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -362,8 +388,7 @@ class GaussianModel:
 
         self._xyz = optimizable_tensors["xyz"]
         self._base_color = optimizable_tensors["base_color"]
-        self._metallic = optimizable_tensors["metallic"]
-        self._roughness = optimizable_tensors["roughness"]
+        self._material_weights = optimizable_tensors["material_weights"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -376,7 +401,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "env_sh":
+            if group["name"] in ["material_palette", "sg_dir", "sg_sharp", "sg_color"]:
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
@@ -397,11 +422,10 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_base_color, new_metallic, new_roughness, new_opacities, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_base_color, new_material_weights, new_opacities, new_scaling, new_rotation):
         d = {"xyz": new_xyz,
         "base_color": new_base_color,
-        "metallic": new_metallic,
-        "roughness": new_roughness,
+        "material_weights": new_material_weights,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation}
@@ -409,8 +433,7 @@ class GaussianModel:
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
         self._base_color = optimizable_tensors["base_color"]
-        self._metallic = optimizable_tensors["metallic"]
-        self._roughness = optimizable_tensors["roughness"]
+        self._material_weights = optimizable_tensors["material_weights"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -437,11 +460,10 @@ class GaussianModel:
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_base_color = self._base_color[selected_pts_mask].repeat(N, 1)
-        new_metallic = self._metallic[selected_pts_mask].repeat(N, 1)
-        new_roughness = self._roughness[selected_pts_mask].repeat(N, 1)
+        new_material_weights = self._material_weights[selected_pts_mask].repeat(N, 1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)
 
-        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_opacity, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_base_color, new_material_weights, new_opacity, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -454,13 +476,12 @@ class GaussianModel:
         
         new_xyz = self._xyz[selected_pts_mask]
         new_base_color = self._base_color[selected_pts_mask]
-        new_metallic = self._metallic[selected_pts_mask]
-        new_roughness = self._roughness[selected_pts_mask]
+        new_material_weights = self._material_weights[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_opacities, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_base_color, new_material_weights, new_opacities, new_scaling, new_rotation)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom
