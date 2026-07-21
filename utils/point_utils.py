@@ -26,12 +26,34 @@ def depths_to_points(view, depthmap):
 def depth_to_normal(view, depth):
     """
         view: view camera
-        depth: depthmap 
+        depth: depthmap (shape: [1, H, W])
     """
-    points = depths_to_points(view, depth).reshape(*depth.shape[1:], 3)
-    output = torch.zeros_like(points)
-    dx = torch.cat([points[2:, 1:-1] - points[:-2, 1:-1]], dim=0)
-    dy = torch.cat([points[1:-1, 2:] - points[1:-1, :-2]], dim=1)
-    normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
-    output[1:-1, 1:-1, :] = normal_map
-    return output
+    points = depths_to_points(view, depth).reshape(*depth.shape[1:], 3) # [H, W, 3]
+    H, W, C = points.shape
+    
+    # Permute to [C, 1, H, W] for conv2d
+    x = points.permute(2, 0, 1).unsqueeze(1) # [3, 1, H, W]
+    
+    # Sobel kernels
+    kx = torch.tensor([[-1., -2., -1.],
+                       [ 0.,  0.,  0.],
+                       [ 1.,  2.,  1.]], device=depth.device).view(1, 1, 3, 3)
+    ky = torch.tensor([[-1.,  0.,  1.],
+                       [-2.,  0.,  2.],
+                       [-1.,  0.,  1.]], device=depth.device).view(1, 1, 3, 3)
+    
+    # Pad input with replicate padding to avoid edge artifacts
+    x_padded = F.pad(x, (1, 1, 1, 1), mode='replicate')
+    
+    dx = F.conv2d(x_padded, kx, padding=0) # [3, 1, H, W]
+    dy = F.conv2d(x_padded, ky, padding=0) # [3, 1, H, W]
+    
+    # Reshape back to [H, W, 3]
+    dx = dx.squeeze(1).permute(1, 2, 0)
+    dy = dy.squeeze(1).permute(1, 2, 0)
+    
+    # Cross product to get normal: cross(dx, dy)
+    normal_map = torch.cross(dx, dy, dim=-1)
+    normal_map = torch.nn.functional.normalize(normal_map, dim=-1)
+    
+    return normal_map
