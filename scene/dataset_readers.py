@@ -323,7 +323,14 @@ def readTensoIRInfo(path, white_background, eval):
                 w2c[:3, :3] = R_w2c
                 w2c[:3, 3] = T_w2c
                 c2w = np.linalg.inv(w2c)
-            # Format 2: transforms.json style transform_matrix
+            # Format 2: TensoIR style cam_transform_mat
+            elif "cam_transform_mat" in metadata:
+                val = metadata["cam_transform_mat"]
+                if isinstance(val, str):
+                    c2w = np.fromstring(val, sep=",").reshape(4, 4)
+                else:
+                    c2w = np.array(val).reshape(4, 4)
+            # Format 3: transforms.json style transform_matrix
             elif "transform_matrix" in metadata:
                 c2w = np.array(metadata["transform_matrix"])
             else:
@@ -340,6 +347,10 @@ def readTensoIRInfo(path, white_background, eval):
             if "cam_K" in metadata:
                 fx = K[0, 0]
                 fy = K[1, 1]
+            elif "cam_angle_x" in metadata:
+                fovx = metadata["cam_angle_x"]
+                fx = fov2focal(fovx, width)
+                fy = fx
             elif "camera_angle_x" in metadata:
                 fovx = metadata["camera_angle_x"]
                 fx = fov2focal(fovx, width)
