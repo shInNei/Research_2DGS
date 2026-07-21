@@ -34,26 +34,26 @@ def depth_to_normal(view, depth):
     # Permute to [C, 1, H, W] for conv2d
     x = points.permute(2, 0, 1).unsqueeze(1) # [3, 1, H, W]
     
-    # Sobel kernels
-    kx = torch.tensor([[-1., -2., -1.],
-                       [ 0.,  0.,  0.],
-                       [ 1.,  2.,  1.]], device=depth.device).view(1, 1, 3, 3)
-    ky = torch.tensor([[-1.,  0.,  1.],
+    # Sobel kernels (kx is horizontal gradient, ky is vertical gradient)
+    kx = torch.tensor([[-1.,  0.,  1.],
                        [-2.,  0.,  2.],
                        [-1.,  0.,  1.]], device=depth.device).view(1, 1, 3, 3)
+    ky = torch.tensor([[-1., -2., -1.],
+                       [ 0.,  0.,  0.],
+                       [ 1.,  2.,  1.]], device=depth.device).view(1, 1, 3, 3)
     
     # Pad input with replicate padding to avoid edge artifacts
     x_padded = F.pad(x, (1, 1, 1, 1), mode='replicate')
     
-    dx = F.conv2d(x_padded, kx, padding=0) # [3, 1, H, W]
-    dy = F.conv2d(x_padded, ky, padding=0) # [3, 1, H, W]
+    dx = F.conv2d(x_padded, kx, padding=0) # horizontal gradient [3, 1, H, W]
+    dy = F.conv2d(x_padded, ky, padding=0) # vertical gradient [3, 1, H, W]
     
     # Reshape back to [H, W, 3]
     dx = dx.squeeze(1).permute(1, 2, 0)
     dy = dy.squeeze(1).permute(1, 2, 0)
     
-    # Cross product to get normal: cross(dx, dy)
-    normal_map = torch.cross(dx, dy, dim=-1)
+    # Cross product to get normal: cross(dy, dx) since dy is vertical (Y) and dx is horizontal (X)
+    normal_map = torch.cross(dy, dx, dim=-1)
     normal_map = torch.nn.functional.normalize(normal_map, dim=-1)
     
     return normal_map
