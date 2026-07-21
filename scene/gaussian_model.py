@@ -69,8 +69,8 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
-        # Initialize global Spherical Gaussian (SG) Mixture envmap (M = 24)
-        M = 24
+        # Initialize global Spherical Gaussian (SG) Mixture envmap (M = 128)
+        M = 128
         indices = torch.arange(0, M, dtype=torch.float32)
         phi = torch.arccos(1.0 - 2.0 * (indices + 0.5) / M)
         theta = math.pi * (1.0 + 5.0**0.5) * indices
@@ -191,12 +191,12 @@ class GaussianModel:
             self.active_sh_degree += 1
 
     def initialize_material_palette(self, num_points):
-        # Initialize K = 16 material palette covering a grid of roughness and metallic
-        K = 16
-        # 4 levels of roughness: 0.1, 0.35, 0.65, 0.9
-        # 4 levels of metallic: 0.05, 0.25, 0.75, 0.95
-        roughness_vals = [0.1, 0.35, 0.65, 0.9]
-        metallic_vals = [0.05, 0.25, 0.75, 0.95]
+        # Initialize K = 32 material palette covering a grid of roughness and metallic
+        K = 32
+        # 8 levels of roughness: 0.05, 0.15, 0.28, 0.42, 0.58, 0.72, 0.85, 0.95
+        # 4 levels of metallic: 0.02, 0.25, 0.75, 0.98
+        roughness_vals = [0.05, 0.15, 0.28, 0.42, 0.58, 0.72, 0.85, 0.95]
+        metallic_vals = [0.02, 0.25, 0.75, 0.98]
         palette_list = []
         for r in roughness_vals:
             for m in metallic_vals:

@@ -41,8 +41,21 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        # Check if the folder contains 'train' with subfolders like 'train_000', 'train_001', etc.
+        # or if the source_path itself has subfolders representing views.
+        is_tensoir = False
+        train_path = os.path.join(args.source_path, "train")
+        check_path = train_path if os.path.exists(train_path) else args.source_path
+        if os.path.exists(check_path):
+            subdirs = [d for d in os.listdir(check_path) if os.path.isdir(os.path.join(check_path, d)) and ('train' in d or d.isdigit())]
+            if len(subdirs) > 0:
+                is_tensoir = True
+
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
+        elif is_tensoir:
+            print("Detected TensoIR data structure!")
+            scene_info = sceneLoadTypeCallbacks["TensoIR"](args.source_path, args.white_background, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
