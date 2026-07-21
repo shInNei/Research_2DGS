@@ -227,12 +227,12 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
       'crf': 18,
   }
   
-  for k in ['depth', 'normal', 'color']:
+  for k in ['depth', 'normal', 'color', 'albedo', 'roughness', 'metallic']:
     video_file = os.path.join(base_dir, f'{video_prefix}_{k}.mp4')
     input_format = 'gray' if k == 'alpha' else 'rgb'
     
 
-    file_ext = 'png' if k in ['color', 'normal'] else 'tiff'
+    file_ext = 'png' if k in ['color', 'normal', 'albedo', 'roughness', 'metallic'] else 'tiff'
     idx = 0
 
     if k == 'color':
@@ -256,7 +256,7 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
         if not os.path.exists(img_file):
           ValueError(f'Image file {img_file} does not exist.')
         img = load_img(img_file)
-        if k in ['color', 'normal']:
+        if k in ['color', 'normal', 'albedo', 'roughness', 'metallic']:
           img = img / 255.
         elif k.startswith('depth'):
           img = render_dist_curve_fn(img)

@@ -68,6 +68,11 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
+        # Global environment lighting Spherical Harmonics coefficients (degree 2 -> 9 coefficients)
+        env_sh_init = torch.zeros((9, 3), dtype=torch.float32, device="cuda")
+        env_sh_init[0, :] = 1.0 / 0.28209479177387814
+        self.env_sh = nn.Parameter(env_sh_init.requires_grad_(True))
+
     def capture(self):
         return (
             self.active_sh_degree,
@@ -83,22 +88,40 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
+            self.env_sh,
         )
     
     def restore(self, model_args, training_args):
-        (self.active_sh_degree, 
-        self._xyz, 
-        self._base_color, 
-        self._metallic,
-        self._roughness,
-        self._scaling, 
-        self._rotation, 
-        self._opacity,
-        self.max_radii2D, 
-        xyz_gradient_accum, 
-        denom,
-        opt_dict, 
-        self.spatial_lr_scale) = model_args
+        if len(model_args) == 14:
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._base_color, 
+            self._metallic,
+            self._roughness,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale,
+            env_sh) = model_args
+            self.env_sh.data.copy_(env_sh)
+        else:
+            (self.active_sh_degree, 
+            self._xyz, 
+            self._base_color, 
+            self._metallic,
+            self._roughness,
+            self._scaling, 
+            self._rotation, 
+            self._opacity,
+            self.max_radii2D, 
+            xyz_gradient_accum, 
+            denom,
+            opt_dict, 
+            self.spatial_lr_scale) = model_args
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
@@ -167,6 +190,10 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
+        env_sh_init = torch.zeros((9, 3), dtype=torch.float32, device="cuda")
+        env_sh_init[0, :] = 1.0 / 0.28209479177387814
+        self.env_sh = nn.Parameter(env_sh_init.requires_grad_(True))
+
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -179,7 +206,8 @@ class GaussianModel:
             {'params': [self._roughness], 'lr': training_args.opacity_lr, "name": "roughness"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            {'params': [self.env_sh], 'lr': 0.01, "name": "env_sh"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)

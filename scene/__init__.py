@@ -12,6 +12,7 @@
 import os
 import random
 import json
+import torch
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
@@ -75,16 +76,19 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
         
         if self.loaded_iter:
-            self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+            point_cloud_dir = os.path.join(self.model_path, "point_cloud", "iteration_" + str(self.loaded_iter))
+            self.gaussians.load_ply(os.path.join(point_cloud_dir, "point_cloud.ply"))
+            env_sh_path = os.path.join(point_cloud_dir, "env_sh.pth")
+            if os.path.exists(env_sh_path):
+                self.gaussians.env_sh.data.copy_(torch.load(env_sh_path))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        # Save environment SH map
+        torch.save(self.gaussians.env_sh, os.path.join(point_cloud_path, "env_sh.pth"))
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
