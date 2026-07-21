@@ -144,11 +144,7 @@ class GaussianModel:
             denom,
             opt_dict, 
             self.spatial_lr_scale) = model_args[:14]
-            K = 16
-            palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
-            torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
-            self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
-            self._material_weights = nn.Parameter(torch.zeros((self._xyz.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+            self.initialize_material_palette(self._xyz.shape[0])
 
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
@@ -194,6 +190,23 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
+    def initialize_material_palette(self, num_points):
+        # Initialize K = 16 material palette covering a grid of roughness and metallic
+        K = 16
+        # 4 levels of roughness: 0.1, 0.35, 0.65, 0.9
+        # 4 levels of metallic: 0.05, 0.25, 0.75, 0.95
+        roughness_vals = [0.1, 0.35, 0.65, 0.9]
+        metallic_vals = [0.05, 0.25, 0.75, 0.95]
+        palette_list = []
+        for r in roughness_vals:
+            for m in metallic_vals:
+                palette_list.append([r, r, m])
+        palette_arr = torch.tensor(palette_list, dtype=torch.float32, device="cuda")
+        # Convert to logit space since we apply sigmoid to it in get_roughness/get_metallic
+        palette_init = torch.log(palette_arr / (1.0 - palette_arr))
+        self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
+        self._material_weights = nn.Parameter(torch.zeros((num_points, K), dtype=torch.float, device="cuda").requires_grad_(True))
+
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
@@ -214,12 +227,7 @@ class GaussianModel:
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._base_color = nn.Parameter(base_color.requires_grad_(True))
         
-        # Initialize K = 16 material palette and weights
-        K = 16
-        palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
-        torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
-        self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
-        self._material_weights = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+        self.initialize_material_palette(fused_point_cloud.shape[0])
         
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
@@ -234,14 +242,14 @@ class GaussianModel:
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._base_color], 'lr': training_args.feature_lr, "name": "base_color"},
-            {'params': [self._material_weights], 'lr': training_args.feature_lr, "name": "material_weights"},
+            {'params': [self._material_weights], 'lr': 0.01, "name": "material_weights"},
             {'params': [self.material_palette], 'lr': training_args.feature_lr, "name": "material_palette"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self.sg_dir], 'lr': 0.0025, "name": "sg_dir"},
             {'params': [self.sg_sharp], 'lr': 0.01, "name": "sg_sharp"},
-            {'params': [self.sg_color], 'lr': 0.0025, "name": "sg_color"}
+            {'params': [self.sg_color], 'lr': 0.01, "name": "sg_color"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -334,12 +342,7 @@ class GaussianModel:
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._base_color = nn.Parameter(torch.tensor(base_color, dtype=torch.float, device="cuda").requires_grad_(True))
         
-        # Initialize K = 16 material palette and weights since we are loading raw point cloud data
-        K = 16
-        palette_init = torch.zeros((K, 3), dtype=torch.float32, device="cuda")
-        torch.nn.init.normal_(palette_init, mean=0.0, std=1.0)
-        self.material_palette = nn.Parameter(palette_init.requires_grad_(True))
-        self._material_weights = nn.Parameter(torch.zeros((xyz.shape[0], K), dtype=torch.float, device="cuda").requires_grad_(True))
+        self.initialize_material_palette(xyz.shape[0])
         
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
