@@ -135,12 +135,21 @@ def shade_anisotropic_ggx_env(pc, v_dir, t_x, t_y, n):
     specular_light = eval_sh(2, sh_coeffs_specular, r)
     specular_light = torch.clamp(specular_light, min=0.0)
     
-    # Fresnel term F (Schlick)
+    # Lazarov/UE4 Split-Sum envBRDF approximation
     F_0 = 0.04 * (1.0 - metallic) + albedo * metallic
     v_dot_n = v_z.clamp(0.0, 1.0)
-    F = F_0 + (1.0 - F_0) * torch.pow(1.0 - v_dot_n, 5)
     
-    specular = specular_light * F
+    # Fit coefficients
+    r_x = alpha * -1.0 + 1.0
+    r_y = alpha * -0.0275 + 0.0422
+    r_z = alpha * -0.572 + 1.047
+    r_w = alpha * 0.022 - 0.040
+    
+    a004 = torch.min(r_x * r_x, torch.exp2(-9.28 * v_dot_n)) * r_x + r_y
+    scale = -1.04 * a004 + r_z
+    bias = 1.04 * a004 + r_w
+    
+    specular = specular_light * (F_0 * scale + bias)
     
     shaded_colors = diffuse + specular
     return torch.clamp(shaded_colors, 0.0, 1.0)
