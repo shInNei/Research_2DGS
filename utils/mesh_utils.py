@@ -98,13 +98,22 @@ class GaussianExtractor(object):
         self.viewpoint_stack = []
 
     @torch.no_grad()
-    def reconstruction(self, viewpoint_stack):
+    def reconstruction(self, viewpoint_stack, save_path=None):
         """
         reconstruct radiance field given cameras
         """
         self.clean()
         self.viewpoint_stack = viewpoint_stack
-        for i, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
+        
+        if save_path is not None:
+            render_path = os.path.join(save_path, "renders")
+            gts_path = os.path.join(save_path, "gt")
+            vis_path = os.path.join(save_path, "vis")
+            os.makedirs(render_path, exist_ok=True)
+            os.makedirs(vis_path, exist_ok=True)
+            os.makedirs(gts_path, exist_ok=True)
+            
+        for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
             render_pkg = self.render(viewpoint_cam, self.gaussians)
             rgb = render_pkg['render']
             alpha = render_pkg['rend_alpha']
@@ -122,17 +131,25 @@ class GaussianExtractor(object):
             metallic_rgb = self.gaussians.get_metallic.repeat(1, 3)
             metallic = self.render(viewpoint_cam, self.gaussians, override_color=metallic_rgb)["render"]
             
-            self.rgbmaps.append(rgb.cpu())
-            self.depthmaps.append(depth.cpu())
-            self.normals.append(normal.cpu())
-            self.albedomaps.append(albedo.cpu())
-            self.roughnessmaps.append(roughness.cpu())
-            self.metallicmaps.append(metallic.cpu())
+            if save_path is not None:
+                gt = viewpoint_cam.original_image[0:3, :, :]
+                save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+                save_img_u8(rgb.permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+                save_img_f32(depth[0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
+                
+                # Save material property maps
+                save_img_u8(np.clip(normal.permute(1,2,0).cpu().numpy() * 0.5 + 0.5, 0.0, 1.0), os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(albedo.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'albedo_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(roughness.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'roughness_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(metallic.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'metallic_{0:05d}'.format(idx) + ".png"))
+            else:
+                self.rgbmaps.append(rgb.cpu())
+                self.depthmaps.append(depth.cpu())
+                self.normals.append(normal.cpu())
+                self.albedomaps.append(albedo.cpu())
+                self.roughnessmaps.append(roughness.cpu())
+                self.metallicmaps.append(metallic.cpu())
         
-        # self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
-        # self.depthmaps = torch.stack(self.depthmaps, dim=0)
-        # self.alphamaps = torch.stack(self.alphamaps, dim=0)
-        # self.depth_normals = torch.stack(self.depth_normals, dim=0)
         self.estimate_bounding_sphere()
 
     def estimate_bounding_sphere(self):
