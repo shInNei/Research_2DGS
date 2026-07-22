@@ -98,7 +98,7 @@ class Scene:
                 self.gaussians.sg_sharp.data.copy_(sg_data["sg_sharp"])
                 self.gaussians.sg_color.data.copy_(sg_data["sg_color"])
             material_palette_path = os.path.join(point_cloud_dir, "material_palette.pth")
-            if os.path.exists(material_palette_path):
+            if hasattr(self.gaussians, 'material_palette') and os.path.exists(material_palette_path):
                 self.gaussians.material_palette.data.copy_(torch.load(material_palette_path))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
@@ -106,13 +106,14 @@ class Scene:
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
-        # Save environment SG map and material palette
+        # Save environment SG map
         torch.save({
             "sg_dir": self.gaussians.sg_dir,
             "sg_sharp": self.gaussians.sg_sharp,
             "sg_color": self.gaussians.sg_color
         }, os.path.join(point_cloud_path, "sg_params.pth"))
-        torch.save(self.gaussians.material_palette, os.path.join(point_cloud_path, "material_palette.pth"))
+        if hasattr(self.gaussians, 'material_palette'):
+            torch.save(self.gaussians.material_palette, os.path.join(point_cloud_path, "material_palette.pth"))
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
