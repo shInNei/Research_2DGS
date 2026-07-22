@@ -215,6 +215,7 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
   depth_file = os.path.join(input_dir, 'vis', f'depth_{idx_to_str(0)}.tiff')
   depth_frame = load_img(depth_file)
   shape = depth_frame.shape
+  p = 3
   valid_depths = depth_frame[depth_frame > 0]
   if len(valid_depths) > 0:
     distance_limits = np.percentile(valid_depths, [p, 100 - p])
