@@ -112,27 +112,32 @@ class GaussianExtractor(object):
             vis_path = os.path.join(save_path, "vis")
             os.makedirs(render_path, exist_ok=True)
             os.makedirs(vis_path, exist_ok=True)
-            os.makedirs(gts_path, exist_ok=True)
-            
+        bg_tensor = torch.tensor([1.0, 1.0, 1.0] if self.gaussians.white_background else [0.0, 0.0, 0.0], dtype=torch.float32, device="cuda").unsqueeze(-1).unsqueeze(-1)
+        
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
             render_pkg = self.render(viewpoint_cam, self.gaussians)
             rgb = render_pkg['render']
             alpha = render_pkg['rend_alpha'] # [1, H, W]
-            alpha_mask = (alpha > 0.05).float()
             
-            normal = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0) * alpha_mask
-            depth = render_pkg['surf_depth'] * alpha_mask
+            normal = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0)
+            depth = render_pkg['surf_depth']
             
-            # Render material channels using override_color and apply alpha mask to clear floaters
-            albedo = self.render(viewpoint_cam, self.gaussians, override_color=self.gaussians.get_base_color)["render"] * alpha_mask
+            # Render material channels using override_color
+            albedo = self.render(viewpoint_cam, self.gaussians, override_color=self.gaussians.get_base_color)["render"]
             
             # Roughness: concat roughness_x (col 0) and roughness_y (col 1) with 0 to get 3 channels
             roughness_rgb = torch.cat([self.gaussians.get_roughness, torch.zeros_like(self.gaussians.get_roughness[:, :1])], dim=-1)
-            roughness = self.render(viewpoint_cam, self.gaussians, override_color=roughness_rgb)["render"] * alpha_mask
+            roughness = self.render(viewpoint_cam, self.gaussians, override_color=roughness_rgb)["render"]
             
             # Metallic: repeat 1 channel to 3 channels
             metallic_rgb = self.gaussians.get_metallic.repeat(1, 3)
-            metallic = self.render(viewpoint_cam, self.gaussians, override_color=metallic_rgb)["render"] * alpha_mask
+            metallic = self.render(viewpoint_cam, self.gaussians, override_color=metallic_rgb)["render"]
+            
+            # Smooth anti-aliased alpha blending with background (eliminates hard pixelated edges and floater specks)
+            albedo_smooth = albedo * alpha + bg_tensor * (1.0 - alpha)
+            roughness_smooth = roughness * alpha + bg_tensor * (1.0 - alpha)
+            metallic_smooth = metallic * alpha + bg_tensor * (1.0 - alpha)
+            normal_smooth = (normal * 0.5 + 0.5) * alpha + bg_tensor * (1.0 - alpha)
             
             if save_path is not None:
                 gt = viewpoint_cam.original_image[0:3, :, :]
@@ -140,12 +145,11 @@ class GaussianExtractor(object):
                 save_img_u8(rgb.permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
                 save_img_f32(depth[0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
                 
-                # Save material property maps with clean background and no floater specks
-                normal_vis = np.clip((normal.permute(1,2,0).cpu().numpy() * 0.5 + 0.5) * alpha_mask.permute(1,2,0).cpu().numpy(), 0.0, 1.0)
-                save_img_u8(normal_vis, os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
-                save_img_u8(np.clip(albedo.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'albedo_{0:05d}'.format(idx) + ".png"))
-                save_img_u8(np.clip(roughness.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'roughness_{0:05d}'.format(idx) + ".png"))
-                save_img_u8(np.clip(metallic.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'metallic_{0:05d}'.format(idx) + ".png"))
+                # Save material property maps with smooth anti-aliased background
+                save_img_u8(np.clip(normal_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(albedo_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'albedo_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(roughness_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'roughness_{0:05d}'.format(idx) + ".png"))
+                save_img_u8(np.clip(metallic_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'metallic_{0:05d}'.format(idx) + ".png"))
             else:
                 self.rgbmaps.append(rgb.cpu())
                 self.depthmaps.append(depth.cpu())
