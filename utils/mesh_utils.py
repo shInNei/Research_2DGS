@@ -113,6 +113,7 @@ class GaussianExtractor(object):
             vis_path = os.path.join(save_path, "vis")
             os.makedirs(render_path, exist_ok=True)
             os.makedirs(vis_path, exist_ok=True)
+            os.makedirs(gts_path, exist_ok=True)
         bg_tensor = self.bg_color.unsqueeze(-1).unsqueeze(-1)
         
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
