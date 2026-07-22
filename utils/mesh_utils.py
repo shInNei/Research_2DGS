@@ -119,17 +119,22 @@ class GaussianExtractor(object):
             rgb = render_pkg['render']
             alpha = render_pkg['rend_alpha'] # [1, H, W]
             
-            normal = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0)
+            # Transform world-space normals to camera view-space normals (N_cam = R_w2c * N_world)
+            normal_world = torch.nn.functional.normalize(render_pkg['rend_normal'], dim=0)
+            R_w2c = viewpoint_cam.world_view_transform[:3, :3]
+            normal_cam = torch.einsum('ij,jhw->ihw', R_w2c, normal_world)
+            normal_cam = torch.nn.functional.normalize(normal_cam, dim=0)
+            
             depth = render_pkg['surf_depth']
             
             # Render material channels using override_color
             albedo = self.render(viewpoint_cam, self.gaussians, override_color=self.gaussians.get_base_color)["render"]
             
-            # Roughness: concat roughness_x (col 0) and roughness_y (col 1) with 0 to get 3 channels
-            roughness_rgb = torch.cat([self.gaussians.get_roughness, torch.zeros_like(self.gaussians.get_roughness[:, :1])], dim=-1)
-            roughness = self.render(viewpoint_cam, self.gaussians, override_color=roughness_rgb)["render"]
+            # Roughness: compute mean scalar roughness alpha = (alpha_x + alpha_y) / 2 as 3-channel grayscale
+            mean_roughness = self.gaussians.get_roughness.mean(dim=-1, keepdim=True).repeat(1, 3)
+            roughness = self.render(viewpoint_cam, self.gaussians, override_color=mean_roughness)["render"]
             
-            # Metallic: repeat 1 channel to 3 channels
+            # Metallic: repeat 1 channel to 3 channels for grayscale map
             metallic_rgb = self.gaussians.get_metallic.repeat(1, 3)
             metallic = self.render(viewpoint_cam, self.gaussians, override_color=metallic_rgb)["render"]
             
@@ -137,7 +142,7 @@ class GaussianExtractor(object):
             albedo_smooth = albedo * alpha + bg_tensor * (1.0 - alpha)
             roughness_smooth = roughness * alpha + bg_tensor * (1.0 - alpha)
             metallic_smooth = metallic * alpha + bg_tensor * (1.0 - alpha)
-            normal_smooth = (normal * 0.5 + 0.5) * alpha + bg_tensor * (1.0 - alpha)
+            normal_smooth = (normal_cam * 0.5 + 0.5) * alpha + bg_tensor * (1.0 - alpha)
             
             if save_path is not None:
                 gt = viewpoint_cam.original_image[0:3, :, :]
@@ -145,7 +150,7 @@ class GaussianExtractor(object):
                 save_img_u8(rgb.permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
                 save_img_f32(depth[0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
                 
-                # Save material property maps with smooth anti-aliased background
+                # Save material property maps with smooth anti-aliased background and accurate grayscale/normal formatting
                 save_img_u8(np.clip(normal_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
                 save_img_u8(np.clip(albedo_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'albedo_{0:05d}'.format(idx) + ".png"))
                 save_img_u8(np.clip(roughness_smooth.permute(1,2,0).cpu().numpy(), 0.0, 1.0), os.path.join(vis_path, 'roughness_{0:05d}'.format(idx) + ".png"))
