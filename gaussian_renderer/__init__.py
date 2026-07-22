@@ -218,8 +218,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     shs = None
     colors_precomp = None
     if override_color is None:
-        # Calculate normal
+        # Calculate normal and tangent vectors
         R = build_rotation(pc._rotation)
+        t_x = R[:, :, 0]
+        t_y = R[:, :, 1]
         n = R[:, :, 2]
         
         # Calculate view direction
@@ -227,7 +229,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         dir_to_cam = campos.unsqueeze(0) - pc.get_xyz
         v_dir = dir_to_cam / (torch.norm(dir_to_cam, dim=-1, keepdim=True) + 1e-6)
         
-        colors_precomp = shade_anisotropic_ggx_sg_point(pc, v_dir, n)
+        light_type = getattr(pipe, 'light_type', getattr(pc, 'light_type', 'colocated'))
+        if light_type == 'envmap':
+            colors_precomp = shade_anisotropic_ggx_sg_point(pc, v_dir, n)
+        else:
+            # Colocated point light: l_dir = v_dir
+            colors_precomp = shade_anisotropic_ggx(pc, v_dir, v_dir, t_x, t_y, n)
     else:
         colors_precomp = override_color
     

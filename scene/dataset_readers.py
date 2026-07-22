@@ -290,7 +290,7 @@ def readTensoIRInfo(path, white_background, eval):
                     break
             if image_path is None:
                 all_pngs = [f for f in os.listdir(d_path) if f.endswith('.png')]
-                filtered = [f for f in all_pngs if f not in ["albedo.png", "normal.png", "depth.png"]]
+                filtered = [f for f in all_pngs if f not in ["albedo.png", "normal.png", "depth.png", "roughness.png", "metallic.png"]]
                 if len(filtered) > 0:
                     image_path = os.path.join(d_path, filtered[0])
                 else:
@@ -314,8 +314,8 @@ def readTensoIRInfo(path, white_background, eval):
             # Read camera parameters from metadata
             # Format 1: NeRFactor style cam_K, cam_R, cam_T
             if "cam_K" in metadata and "cam_R" in metadata and "cam_T" in metadata:
-                K = np.array(metadata["cam_K"])
-                R_w2c = np.array(metadata["cam_R"])
+                K = np.array(metadata["cam_K"]).reshape(3, 3)
+                R_w2c = np.array(metadata["cam_R"]).reshape(3, 3)
                 T_w2c = np.array(metadata["cam_T"]).flatten()
                 
                 # Assemble w2c matrix
