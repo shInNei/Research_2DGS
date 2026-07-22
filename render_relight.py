@@ -30,7 +30,7 @@ def render_relighting(dataset, iteration, pipe, relight_light_dir=None, output_p
         print("No test cameras found!")
         return
 
-    relight_dir = os.path.join(dataset.model_path, "relight", f"ours_{scene.loaded_iter}")
+    relight_dir = os.path.join(dataset.model_path, "relight", "test", f"ours_{scene.loaded_iter}")
     renders_path = os.path.join(relight_dir, "renders")
     gts_path = os.path.join(relight_dir, "gt")
     os.makedirs(renders_path, exist_ok=True)
