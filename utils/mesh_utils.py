@@ -83,6 +83,7 @@ class GaussianExtractor(object):
         if bg_color is None:
             bg_color = [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        self.bg_color = background
         self.gaussians = gaussians
         pipe.light_type = getattr(gaussians, 'light_type', 'colocated')
         self.render = partial(render, pipe=pipe, bg_color=background)
@@ -112,7 +113,7 @@ class GaussianExtractor(object):
             vis_path = os.path.join(save_path, "vis")
             os.makedirs(render_path, exist_ok=True)
             os.makedirs(vis_path, exist_ok=True)
-        bg_tensor = torch.tensor([1.0, 1.0, 1.0] if self.gaussians.white_background else [0.0, 0.0, 0.0], dtype=torch.float32, device="cuda").unsqueeze(-1).unsqueeze(-1)
+        bg_tensor = self.bg_color.unsqueeze(-1).unsqueeze(-1)
         
         for idx, viewpoint_cam in tqdm(enumerate(self.viewpoint_stack), desc="reconstruct radiance fields"):
             render_pkg = self.render(viewpoint_cam, self.gaussians)
