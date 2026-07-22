@@ -154,7 +154,65 @@ def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
     shaded_colors = diffuse + specular
     return torch.clamp(shaded_colors, 0.0, 1.0)
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, sg_dir, sg_sharp, sg_color):
+    v_z = (v_dir * n).sum(dim=-1, keepdim=True)
+    sign = torch.where(v_z >= 0.0, 1.0, -1.0)
+    normal = n * sign
+    v_z = v_z * sign
+    
+    albedo = pc.get_base_color
+    metallic = pc.get_metallic
+    roughness = pc.get_roughness
+    
+    alpha_x = roughness[:, 0:1]
+    alpha_y = roughness[:, 1:2]
+    alpha_x = torch.clamp(alpha_x * alpha_x, min=0.001, max=1.0)
+    alpha_y = torch.clamp(alpha_y * alpha_y, min=0.001, max=1.0)
+    alpha = torch.sqrt(alpha_x * alpha_y)
+    
+    sg_dir = torch.nn.functional.normalize(sg_dir, dim=-1)
+    sg_sharp = torch.clamp(sg_sharp, min=0.1, max=1000.0)
+    sg_color = torch.clamp(sg_color, min=0.0)
+    
+    normal_dot_dir = normal @ sg_dir.T
+    cos_term = torch.clamp(normal_dot_dir, min=0.0)
+    sg_integral = (2.0 * math.pi / sg_sharp.T) * (1.0 - torch.exp(-2.0 * sg_sharp.T))
+    diffuse_light = (cos_term * sg_integral) @ sg_color
+    
+    diffuse = albedo * (1.0 - metallic) * diffuse_light
+    
+    r = 2.0 * v_z * normal - v_dir
+    r = torch.nn.functional.normalize(r, dim=-1)
+    
+    lambda_spec = 2.0 / (alpha * alpha + 1e-5)
+    r_dot_dir = r @ sg_dir.T
+    sharp_env = sg_sharp.T
+    lambda_total = sharp_env + lambda_spec
+    
+    exp_factor = (sharp_env * lambda_spec / lambda_total) * (r_dot_dir - 1.0)
+    exp_factor = torch.clamp(exp_factor, min=-40.0, max=0.0)
+    
+    spec_intensity = (2.0 * math.pi / lambda_total) * torch.exp(exp_factor)
+    specular_light = spec_intensity @ sg_color
+    
+    F_0 = 0.04 * (1.0 - metallic) + albedo * metallic
+    v_dot_n = v_z.clamp(0.0, 1.0)
+    
+    r_x = alpha * -1.0 + 1.0
+    r_y = alpha * -0.0275 + 0.0422
+    r_z = alpha * -0.572 + 1.047
+    r_w = alpha * 0.022 - 0.040
+    
+    a004 = torch.min(r_x * r_x, torch.exp2(-9.28 * v_dot_n)) * r_x + r_y
+    scale = -1.04 * a004 + r_z
+    bias = 1.04 * a004 + r_w
+    
+    specular = specular_light * (F_0 * scale + bias)
+    
+    shaded_colors = diffuse + specular
+    return torch.clamp(shaded_colors, 0.0, 1.0)
+
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, override_sg = None):
     """
     Render the scene. 
     
@@ -230,7 +288,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         v_dir = dir_to_cam / (torch.norm(dir_to_cam, dim=-1, keepdim=True) + 1e-6)
         
         light_type = getattr(pipe, 'light_type', getattr(pc, 'light_type', 'colocated'))
-        if light_type == 'envmap':
+        if override_sg is not None:
+            colors_precomp = shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, override_sg["sg_dir"], override_sg["sg_sharp"], override_sg["sg_color"])
+        elif light_type == 'envmap':
             colors_precomp = shade_anisotropic_ggx_sg_point(pc, v_dir, n)
         else:
             # Colocated point light: l_dir = v_dir

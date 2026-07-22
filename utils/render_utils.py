@@ -247,7 +247,6 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
     with media.VideoWriter(
         video_file, **video_kwargs, input_format=input_format) as writer:
       for idx in tqdm(range(num_frames)):
-        # img_file = os.path.join(input_dir, f'{k}_{idx_to_str(idx)}.{file_ext}')
         if k == 'color':
           img_file = os.path.join(input_dir, 'renders', f'{idx_to_str(idx)}.{file_ext}')
         else:
@@ -266,6 +265,48 @@ def create_videos(base_dir, input_dir, out_name, num_frames=480):
         frame = (np.clip(np.nan_to_num(img), 0., 1.) * 255.).astype(np.uint8)
         writer.add_image(frame)
         idx += 1
+
+  # Create a single COMBINED 2x3 Grid Video (Color | Albedo | Normal // Roughness | Metallic | Depth)
+  combined_video_file = os.path.join(base_dir, f'{video_prefix}_combined_grid.mp4')
+  grid_kwargs = {
+      'shape': (shape[0] * 2, shape[1] * 3),
+      'codec': 'h264',
+      'fps': 30,
+      'crf': 18,
+  }
+  print(f'Making COMBINED 2x3 Grid video {combined_video_file}...')
+  try:
+      with media.VideoWriter(combined_video_file, **grid_kwargs, input_format='rgb') as writer:
+          for idx in tqdm(range(num_frames), desc="Building Grid Video"):
+              frames_dict = {}
+              for channel in ['color', 'albedo', 'normal', 'roughness', 'metallic', 'depth']:
+                  file_ext = 'png' if channel in ['color', 'normal', 'albedo', 'roughness', 'metallic'] else 'tiff'
+                  if channel == 'color':
+                      img_file = os.path.join(input_dir, 'renders', f'{idx_to_str(idx)}.{file_ext}')
+                  else:
+                      img_file = os.path.join(input_dir, 'vis', f'{channel}_{idx_to_str(idx)}.{file_ext}')
+                  
+                  if os.path.exists(img_file):
+                      img = load_img(img_file)
+                      if channel in ['color', 'normal', 'albedo', 'roughness', 'metallic']:
+                          img = img / 255.
+                      elif channel.startswith('depth'):
+                          img = render_dist_curve_fn(img)
+                          img = np.clip((img - np.minimum(lo, hi)) / np.abs(hi - lo), 0, 1)
+                          img = cm.get_cmap('turbo')(img)[..., :3]
+                      frames_dict[channel] = (np.clip(np.nan_to_num(img), 0., 1.) * 255.).astype(np.uint8)
+                  else:
+                      frames_dict[channel] = np.zeros((shape[0], shape[1], 3), dtype=np.uint8)
+
+              # Top row: Color | Albedo | Normal
+              top_row = np.hstack([frames_dict['color'], frames_dict['albedo'], frames_dict['normal']])
+              # Bottom row: Roughness | Metallic | Depth
+              bottom_row = np.hstack([frames_dict['roughness'], frames_dict['metallic'], frames_dict['depth']])
+              # 2x3 Grid Frame
+              grid_frame = np.vstack([top_row, bottom_row])
+              writer.add_image(grid_frame)
+  except Exception as e:
+      print(f"Failed to create combined grid video: {e}")
 
 def save_img_u8(img, pth):
   """Save an image (probably RGB) in [0, 1] to disk as a uint8 PNG."""
