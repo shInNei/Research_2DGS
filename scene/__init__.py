@@ -55,7 +55,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif is_tensoir:
             print("Detected TensoIR data structure!")
-            scene_info = sceneLoadTypeCallbacks["TensoIR"](args.source_path, args.white_background, args.eval)
+            scene_info = sceneLoadTypeCallbacks["TensoIR"](args.source_path, args.white_background, args.eval, getattr(args, 'eval_light_name', None))
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)

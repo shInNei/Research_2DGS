@@ -254,7 +254,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
-def readTensoIRInfo(path, white_background, eval):
+def readTensoIRInfo(path, white_background, eval, eval_light_name=None):
     # Detect the directories
     train_dir = os.path.join(path, "train")
     if not os.path.exists(train_dir):
@@ -283,11 +283,37 @@ def readTensoIRInfo(path, white_background, eval):
             
             # Find the input RGB/RGBA image
             image_path = None
-            for candidate in ["rgba.png", "rgb.png", "image.png"]:
-                p = os.path.join(d_path, candidate)
-                if os.path.exists(p):
-                    image_path = p
-                    break
+            
+            # If light-specific evaluation is requested, search for light-specific GT images
+            if eval_light_name is not None:
+                light_candidates = [
+                    f"{eval_light_name}.png",
+                    f"rgba_{eval_light_name}.png",
+                    f"rgb_{eval_light_name}.png",
+                    f"{d}_{eval_light_name}.png",
+                    f"{eval_light_name}_{d}.png",
+                    f"{split_prefix}_{idx:03d}_{eval_light_name}.png",
+                    f"{idx:03d}_{eval_light_name}.png"
+                ]
+                for cand in light_candidates:
+                    p = os.path.join(d_path, cand)
+                    if os.path.exists(p):
+                        image_path = p
+                        break
+                if image_path is None:
+                    p_relight = os.path.join(path, "eval_relight", eval_light_name, f"{idx:03d}.png")
+                    p_relight_name = os.path.join(path, "eval_relight", eval_light_name, f"{d}.png")
+                    if os.path.exists(p_relight):
+                        image_path = p_relight
+                    elif os.path.exists(p_relight_name):
+                        image_path = p_relight_name
+
+            if image_path is None:
+                for candidate in ["rgba.png", "rgb.png", "image.png"]:
+                    p = os.path.join(d_path, candidate)
+                    if os.path.exists(p):
+                        image_path = p
+                        break
             if image_path is None:
                 all_pngs = [f for f in os.listdir(d_path) if f.endswith('.png')]
                 filtered = [f for f in all_pngs if f not in ["albedo.png", "normal.png", "depth.png", "roughness.png", "metallic.png"]]

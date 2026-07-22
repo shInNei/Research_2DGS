@@ -20,6 +20,24 @@ def render_relighting(dataset, iteration, pipe, hdr_path=None, relight_light_dir
     Renders test views under a NEW relighting condition (e.g. HDR map or rotated point light)
     and computes Relighting PSNR, SSIM, LPIPS metrics.
     """
+    if hdr_path and os.path.exists(hdr_path):
+        env_name = os.path.splitext(os.path.basename(hdr_path))[0]
+        dataset.eval_light_name = env_name
+        relight_name = f"hdr_{env_name}"
+    else:
+        relight_name = "orbit"
+
+    # Cleanup legacy leftover messy folders inside relight if present
+    import shutil
+    base_relight = os.path.join(dataset.model_path, "relight")
+    for legacy_dir in ["ours_30000", "test"]:
+        p_legacy = os.path.join(base_relight, legacy_dir)
+        if os.path.exists(p_legacy) and os.path.isdir(p_legacy):
+            try:
+                shutil.rmtree(p_legacy)
+            except:
+                pass
+
     gaussians = GaussianModel(dataset.sh_degree)
     gaussians.light_type = getattr(dataset, 'light_type', 'colocated')
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -31,11 +49,6 @@ def render_relighting(dataset, iteration, pipe, hdr_path=None, relight_light_dir
     if len(test_cameras) == 0:
         print("No test cameras found!")
         return
-
-    relight_name = "hdr" if hdr_path else "orbit"
-    if hdr_path and os.path.exists(hdr_path):
-        env_name = os.path.splitext(os.path.basename(hdr_path))[0]
-        relight_name = f"hdr_{env_name}"
 
     relight_dir = os.path.join(dataset.model_path, "relight", relight_name, "test", f"ours_{scene.loaded_iter}")
     renders_path = os.path.join(relight_dir, "renders")
