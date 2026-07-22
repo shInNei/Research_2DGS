@@ -84,6 +84,7 @@ class GaussianExtractor(object):
             bg_color = [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         self.gaussians = gaussians
+        pipe.light_type = getattr(gaussians, 'light_type', 'colocated')
         self.render = partial(render, pipe=pipe, bg_color=background)
         self.clean()
 

@@ -251,8 +251,8 @@ class GaussianModel:
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         base_color = self._base_color.detach().cpu().numpy()
-        metallic = self.get_metallic.detach().cpu().numpy()
-        roughness = self.get_roughness.detach().cpu().numpy()
+        metallic = self._metallic.detach().cpu().numpy()
+        roughness = self._roughness.detach().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
@@ -301,6 +301,10 @@ class GaussianModel:
         # Read metallic and roughness if available
         if "metallic" in plydata.elements[0]:
             metallic = np.asarray(plydata.elements[0]["metallic"])[..., np.newaxis]
+            # If loaded values are in [0, 1] (saved post-sigmoid), convert back to raw logits
+            if metallic.min() >= 0.0 and metallic.max() <= 1.0:
+                metallic = np.clip(metallic, 1e-4, 1.0 - 1e-4)
+                metallic = np.log(metallic / (1.0 - metallic))
         else:
             metallic = self.metallic_inverse_activation(np.ones((xyz.shape[0], 1)) * 0.1)
 
@@ -308,6 +312,10 @@ class GaussianModel:
             roughness = np.zeros((xyz.shape[0], 2))
             roughness[:, 0] = np.asarray(plydata.elements[0]["roughness_0"])
             roughness[:, 1] = np.asarray(plydata.elements[0]["roughness_1"])
+            # If loaded values are in [0, 1] (saved post-sigmoid), convert back to raw logits
+            if roughness.min() >= 0.0 and roughness.max() <= 1.0:
+                roughness = np.clip(roughness, 1e-4, 1.0 - 1e-4)
+                roughness = np.log(roughness / (1.0 - roughness))
         else:
             roughness = self.roughness_inverse_activation(np.ones((xyz.shape[0], 2)) * 0.5)
 
