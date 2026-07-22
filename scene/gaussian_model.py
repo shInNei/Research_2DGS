@@ -301,8 +301,8 @@ class GaussianModel:
         # Read metallic and roughness if available
         if "metallic" in plydata.elements[0]:
             metallic = np.asarray(plydata.elements[0]["metallic"])[..., np.newaxis]
-            # If loaded values are in [0, 1] (saved post-sigmoid), convert back to raw logits
-            if metallic.min() >= 0.0 and metallic.max() <= 1.0:
+            # If loaded values are in [-0.05, 1.05] (saved post-sigmoid), convert back to raw logits
+            if metallic.min() >= -0.05 and metallic.max() <= 1.05:
                 metallic = np.clip(metallic, 1e-4, 1.0 - 1e-4)
                 metallic = np.log(metallic / (1.0 - metallic))
         else:
@@ -312,8 +312,8 @@ class GaussianModel:
             roughness = np.zeros((xyz.shape[0], 2))
             roughness[:, 0] = np.asarray(plydata.elements[0]["roughness_0"])
             roughness[:, 1] = np.asarray(plydata.elements[0]["roughness_1"])
-            # If loaded values are in [0, 1] (saved post-sigmoid), convert back to raw logits
-            if roughness.min() >= 0.0 and roughness.max() <= 1.0:
+            # If loaded values are in [-0.05, 1.05] (saved post-sigmoid), convert back to raw logits
+            if roughness.min() >= -0.05 and roughness.max() <= 1.05:
                 roughness = np.clip(roughness, 1e-4, 1.0 - 1e-4)
                 roughness = np.log(roughness / (1.0 - roughness))
         else:
