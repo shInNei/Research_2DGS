@@ -12,6 +12,7 @@ from gaussian_renderer import GaussianModel, render
 from scene import Scene
 from utils.render_utils import save_img_u8
 
+@torch.no_grad()
 def render_relighting(dataset, iteration, pipe, relight_light_dir=None, output_path=None):
     """
     Renders test views under a NEW relighting condition (e.g. rotated light direction or new light position)
@@ -61,8 +62,8 @@ def render_relighting(dataset, iteration, pipe, relight_light_dir=None, output_p
         rgb = render_pkg['render']
         gt = viewpoint_cam.original_image[0:3, :, :]
         
-        save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
-        save_img_u8(rgb.permute(1,2,0).cpu().numpy(), os.path.join(renders_path, '{0:05d}'.format(idx) + ".png"))
+        save_img_u8(gt.detach().permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        save_img_u8(rgb.detach().permute(1,2,0).cpu().numpy(), os.path.join(renders_path, '{0:05d}'.format(idx) + ".png"))
 
     print(f"Relighting renders exported to {relight_dir}")
 
