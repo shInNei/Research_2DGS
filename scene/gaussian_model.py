@@ -250,6 +250,8 @@ class GaussianModel:
         l.append('metallic')
         for i in range(2):
             l.append('roughness_{}'.format(i))
+        for i in range(3):
+            l.append('ambient_{}'.format(i))
         l.append('opacity')
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
@@ -265,6 +267,7 @@ class GaussianModel:
         base_color = self._base_color.detach().cpu().numpy()
         metallic = self._metallic.detach().cpu().numpy()
         roughness = self._roughness.detach().cpu().numpy()
+        ambient = self._ambient.detach().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
@@ -272,7 +275,7 @@ class GaussianModel:
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, base_color, metallic, roughness, opacities, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, base_color, metallic, roughness, ambient, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -313,23 +316,32 @@ class GaussianModel:
         # Read metallic and roughness if available
         if "metallic" in plydata.elements[0]:
             metallic = np.asarray(plydata.elements[0]["metallic"])[..., np.newaxis]
-            # If loaded values are in [-0.05, 1.05] (saved post-sigmoid), convert back to raw logits
             if metallic.min() >= -0.05 and metallic.max() <= 1.05:
                 metallic = np.clip(metallic, 1e-4, 1.0 - 1e-4)
                 metallic = np.log(metallic / (1.0 - metallic))
         else:
-            metallic = self.metallic_inverse_activation(np.ones((xyz.shape[0], 1)) * 0.1)
+            metallic = self.metallic_inverse_activation(np.ones((xyz.shape[0], 1)) * 0.1).cpu().numpy()
 
         if "roughness_0" in plydata.elements[0]:
             roughness = np.zeros((xyz.shape[0], 2))
             roughness[:, 0] = np.asarray(plydata.elements[0]["roughness_0"])
             roughness[:, 1] = np.asarray(plydata.elements[0]["roughness_1"])
-            # If loaded values are in [-0.05, 1.05] (saved post-sigmoid), convert back to raw logits
             if roughness.min() >= -0.05 and roughness.max() <= 1.05:
                 roughness = np.clip(roughness, 1e-4, 1.0 - 1e-4)
                 roughness = np.log(roughness / (1.0 - roughness))
         else:
-            roughness = self.roughness_inverse_activation(np.ones((xyz.shape[0], 2)) * 0.5)
+            roughness = self.roughness_inverse_activation(np.ones((xyz.shape[0], 2)) * 0.5).cpu().numpy()
+
+        if "ambient_0" in plydata.elements[0]:
+            ambient = np.zeros((xyz.shape[0], 3))
+            ambient[:, 0] = np.asarray(plydata.elements[0]["ambient_0"])
+            ambient[:, 1] = np.asarray(plydata.elements[0]["ambient_1"])
+            ambient[:, 2] = np.asarray(plydata.elements[0]["ambient_2"])
+            if ambient.min() >= -0.05 and ambient.max() <= 1.05:
+                ambient = np.clip(ambient, 1e-4, 1.0 - 1e-4)
+                ambient = np.log(ambient / (1.0 - ambient))
+        else:
+            ambient = self.ambient_inverse_activation(torch.ones((xyz.shape[0], 3), device="cuda") * 0.15).cpu().numpy()
 
         rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
         rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
@@ -341,6 +353,8 @@ class GaussianModel:
         self._base_color = nn.Parameter(torch.tensor(base_color, dtype=torch.float, device="cuda").requires_grad_(True))
         self._metallic = nn.Parameter(torch.tensor(metallic, dtype=torch.float, device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._ambient = nn.Parameter(torch.tensor(ambient, dtype=torch.float, device="cuda").requires_grad_(True))
+
         
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
