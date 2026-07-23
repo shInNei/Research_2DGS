@@ -313,35 +313,27 @@ class GaussianModel:
         for idx, attr_name in enumerate(scale_names):
             scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        # Read metallic and roughness if available
+        # Read metallic, roughness, and ambient (raw logits saved by save_ply)
         if "metallic" in plydata.elements[0]:
             metallic = np.asarray(plydata.elements[0]["metallic"])[..., np.newaxis]
-            if metallic.min() >= -0.05 and metallic.max() <= 1.05:
-                metallic = np.clip(metallic, 1e-4, 1.0 - 1e-4)
-                metallic = np.log(metallic / (1.0 - metallic))
         else:
-            metallic = self.metallic_inverse_activation(np.ones((xyz.shape[0], 1)) * 0.1).cpu().numpy()
+            metallic = self.metallic_inverse_activation(torch.ones((xyz.shape[0], 1), device="cuda") * 0.1).cpu().numpy()
 
         if "roughness_0" in plydata.elements[0]:
             roughness = np.zeros((xyz.shape[0], 2))
             roughness[:, 0] = np.asarray(plydata.elements[0]["roughness_0"])
             roughness[:, 1] = np.asarray(plydata.elements[0]["roughness_1"])
-            if roughness.min() >= -0.05 and roughness.max() <= 1.05:
-                roughness = np.clip(roughness, 1e-4, 1.0 - 1e-4)
-                roughness = np.log(roughness / (1.0 - roughness))
         else:
-            roughness = self.roughness_inverse_activation(np.ones((xyz.shape[0], 2)) * 0.5).cpu().numpy()
+            roughness = self.roughness_inverse_activation(torch.ones((xyz.shape[0], 2), device="cuda") * 0.5).cpu().numpy()
 
         if "ambient_0" in plydata.elements[0]:
             ambient = np.zeros((xyz.shape[0], 3))
             ambient[:, 0] = np.asarray(plydata.elements[0]["ambient_0"])
             ambient[:, 1] = np.asarray(plydata.elements[0]["ambient_1"])
             ambient[:, 2] = np.asarray(plydata.elements[0]["ambient_2"])
-            if ambient.min() >= -0.05 and ambient.max() <= 1.05:
-                ambient = np.clip(ambient, 1e-4, 1.0 - 1e-4)
-                ambient = np.log(ambient / (1.0 - ambient))
         else:
             ambient = self.ambient_inverse_activation(torch.ones((xyz.shape[0], 3), device="cuda") * 0.15).cpu().numpy()
+
 
         rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
         rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
