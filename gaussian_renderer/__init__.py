@@ -18,6 +18,11 @@ from utils.point_utils import depth_to_normal
 from utils.general_utils import build_rotation
 
 def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
+    # Ensure unit tangent space vectors
+    t_x = torch.nn.functional.normalize(t_x, dim=-1)
+    t_y = torch.nn.functional.normalize(t_y, dim=-1)
+    n = torch.nn.functional.normalize(n, dim=-1)
+
     # Flip normal if it faces away from the viewer (double-sided rendering)
     v_z_raw = (v_dir * n).sum(dim=-1, keepdim=True)
     sign = torch.where(v_z_raw >= 0.0, 1.0, -1.0)
