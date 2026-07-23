@@ -49,6 +49,8 @@ class GaussianModel:
 
         self.roughness_activation = torch.sigmoid
         self.roughness_inverse_activation = inverse_sigmoid
+        self.ambient_activation = torch.sigmoid
+        self.ambient_inverse_activation = inverse_sigmoid
 
 
     def __init__(self, sh_degree : int):
@@ -58,6 +60,7 @@ class GaussianModel:
         self._base_color = torch.empty(0)
         self._metallic = torch.empty(0)
         self._roughness = torch.empty(0)
+        self._ambient = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
@@ -94,6 +97,7 @@ class GaussianModel:
             self._base_color,
             self._metallic,
             self._roughness,
+            self._ambient,
             self._scaling,
             self._rotation,
             self._opacity,
@@ -113,6 +117,7 @@ class GaussianModel:
         self._base_color, 
         self._metallic,
         self._roughness,
+        self._ambient,
         self._scaling, 
         self._rotation, 
         self._opacity,
@@ -123,7 +128,7 @@ class GaussianModel:
         self.spatial_lr_scale,
         sg_dir,
         sg_sharp,
-        sg_color) = model_args[:16]
+        sg_color) = model_args[:17]
         
         self.sg_dir.data.copy_(sg_dir)
         self.sg_sharp.data.copy_(sg_sharp)
@@ -157,6 +162,10 @@ class GaussianModel:
     @property
     def get_roughness(self):
         return self.roughness_activation(self._roughness)
+
+    @property
+    def get_ambient(self):
+        return self.ambient_activation(self._ambient) * 0.4
     
     @property
     def get_opacity(self):
@@ -188,11 +197,13 @@ class GaussianModel:
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((num_points, 1), dtype=torch.float, device="cuda"))
         metallic_init = self.metallic_inverse_activation(0.1 * torch.ones((num_points, 1), dtype=torch.float, device="cuda"))
         roughness_init = self.roughness_inverse_activation(0.5 * torch.ones((num_points, 2), dtype=torch.float, device="cuda"))
+        ambient_init = self.ambient_inverse_activation(0.15 * torch.ones((num_points, 3), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._base_color = nn.Parameter(base_color.requires_grad_(True))
         self._metallic = nn.Parameter(metallic_init.requires_grad_(True))
         self._roughness = nn.Parameter(roughness_init.requires_grad_(True))
+        self._ambient = nn.Parameter(ambient_init.requires_grad_(True))
         
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
@@ -209,6 +220,7 @@ class GaussianModel:
             {'params': [self._base_color], 'lr': training_args.feature_lr, "name": "base_color"},
             {'params': [self._metallic], 'lr': training_args.feature_lr, "name": "metallic"},
             {'params': [self._roughness], 'lr': training_args.feature_lr, "name": "roughness"},
+            {'params': [self._ambient], 'lr': training_args.feature_lr * 0.5, "name": "ambient"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -379,6 +391,7 @@ class GaussianModel:
         self._base_color = optimizable_tensors["base_color"]
         self._metallic = optimizable_tensors["metallic"]
         self._roughness = optimizable_tensors["roughness"]
+        self._ambient = optimizable_tensors["ambient"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -412,11 +425,12 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_base_color, new_metallic, new_roughness, new_opacities, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_base_color, new_metallic, new_roughness, new_ambient, new_opacities, new_scaling, new_rotation):
         d = {"xyz": new_xyz,
         "base_color": new_base_color,
         "metallic": new_metallic,
         "roughness": new_roughness,
+        "ambient": new_ambient,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation}
@@ -426,6 +440,7 @@ class GaussianModel:
         self._base_color = optimizable_tensors["base_color"]
         self._metallic = optimizable_tensors["metallic"]
         self._roughness = optimizable_tensors["roughness"]
+        self._ambient = optimizable_tensors["ambient"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -454,9 +469,10 @@ class GaussianModel:
         new_base_color = self._base_color[selected_pts_mask].repeat(N, 1)
         new_metallic = self._metallic[selected_pts_mask].repeat(N, 1)
         new_roughness = self._roughness[selected_pts_mask].repeat(N, 1)
+        new_ambient = self._ambient[selected_pts_mask].repeat(N, 1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)
 
-        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_opacity, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_ambient, new_opacity, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -471,11 +487,13 @@ class GaussianModel:
         new_base_color = self._base_color[selected_pts_mask]
         new_metallic = self._metallic[selected_pts_mask]
         new_roughness = self._roughness[selected_pts_mask]
+        new_ambient = self._ambient[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_opacities, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_base_color, new_metallic, new_roughness, new_ambient, new_opacities, new_scaling, new_rotation)
+
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom

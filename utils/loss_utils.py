@@ -91,11 +91,13 @@ def knn_3d_material_smoothness_loss(gaussians, k=5, sample_size=4096):
         color_sub = gaussians.get_base_color[indices]
         rough_sub = gaussians.get_roughness[indices]
         metal_sub = gaussians.get_metallic[indices]
+        amb_sub = gaussians.get_ambient[indices]
     else:
         xyz_sub = xyz
         color_sub = gaussians.get_base_color
         rough_sub = gaussians.get_roughness
         metal_sub = gaussians.get_metallic
+        amb_sub = gaussians.get_ambient
 
     # Compute 3D pairwise Euclidean distances: [B, B]
     dists = torch.cdist(xyz_sub, xyz_sub, p=2)
@@ -113,12 +115,15 @@ def knn_3d_material_smoothness_loss(gaussians, k=5, sample_size=4096):
     color_neighbors = color_sub[knn_idxs]
     rough_neighbors = rough_sub[knn_idxs]
     metal_neighbors = metal_sub[knn_idxs]
+    amb_neighbors = amb_sub[knn_idxs]
 
     # Compute weighted L1 differences
     diff_color = (torch.abs(color_sub.unsqueeze(1) - color_neighbors) * spatial_weights).mean()
     diff_rough = (torch.abs(rough_sub.unsqueeze(1) - rough_neighbors) * spatial_weights).mean()
     diff_metal = (torch.abs(metal_sub.unsqueeze(1) - metal_neighbors) * spatial_weights).mean()
+    diff_amb = (torch.abs(amb_sub.unsqueeze(1) - amb_neighbors) * spatial_weights).mean()
 
-    return diff_color + diff_rough + diff_metal
+    return diff_color + diff_rough + diff_metal + diff_amb
+
 
 

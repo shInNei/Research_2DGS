@@ -81,15 +81,17 @@ def shade_anisotropic_ggx(pc, v_dir, l_dir, t_x, t_y, n):
     
     G_2 = ((v_z > 0.0) & (l_z > 0.0)).float() / (1.0 + lambda_v + lambda_l + 1e-6)
     
-    # 5. Combined Shading
+    # 5. Combined Shading (Direct Point Light + Indirect Ambient Illumination Field)
     cos_l = torch.clamp(l_z, min=0.0)
     cos_v = torch.clamp(v_z, min=1e-3)
     
-    diffuse = albedo * (1.0 - metallic) * cos_l
+    ambient = pc.get_ambient
+    diffuse = albedo * (1.0 - metallic) * (cos_l + ambient)
     specular = (D * G_2 * F) / (4.0 * cos_v)
     
     shaded_colors = diffuse + specular
     return torch.clamp(shaded_colors, 0.0, 1.0)
+
 
 def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
     # 1. Flip normal if it faces away from viewer
