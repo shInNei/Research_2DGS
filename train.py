@@ -132,7 +132,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 if iteration == opt.iterations:
                     print("\n[ITER {}] Pruning floaters before final save...".format(iteration))
-                    gaussians.prune_floaters_and_large_scales(min_opacity=0.02, extent=scene.cameras_extent)
+                    gaussians.prune_floaters_and_large_scales(min_opacity=0.005, extent=scene.cameras_extent)
+
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 

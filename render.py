@@ -55,7 +55,8 @@ if __name__ == "__main__":
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
     # Prune any remaining floaters upon model load for clean rendering & metrics evaluation
-    gaussians.prune_floaters_and_large_scales(min_opacity=0.02, extent=scene.cameras_extent)
+    gaussians.prune_floaters_and_large_scales(min_opacity=0.005, extent=scene.cameras_extent)
+
 
     train_dir = os.path.join(args.model_path, 'train', "ours_{}".format(scene.loaded_iter))
 

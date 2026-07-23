@@ -523,10 +523,10 @@ class GaussianModel:
         self.prune_points(prune_mask)
         torch.cuda.empty_cache()
 
-    def prune_floaters_and_large_scales(self, min_opacity=0.02, extent=None, max_aspect_ratio=10.0):
+    def prune_floaters_and_large_scales(self, min_opacity=0.005, extent=None, max_aspect_ratio=None):
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if extent is not None:
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.2 * extent
             prune_mask = torch.logical_or(prune_mask, big_points_ws)
         if max_aspect_ratio is not None:
             scales = self.get_scaling
@@ -537,6 +537,7 @@ class GaussianModel:
             print(f"Pruned {prune_mask.sum().item()} floater/spiky Gaussians.")
             self.prune_points(prune_mask)
             torch.cuda.empty_cache()
+
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
