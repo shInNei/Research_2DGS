@@ -294,47 +294,65 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     shs = None
     
-    # 1. DEFERRED G-BUFFER FEATURE RASTERIZATION
-    # Combine per-Gaussian material parameters into a 6D G-Buffer feature tensor
-    gbuffer_features = torch.cat([pc.get_base_color, pc.get_roughness, pc.get_metallic], dim=-1) # [N, 6]
-    
+    # 1. MULTI-PASS 3-CHANNEL DEFERRED G-BUFFER RASTERIZATION
     if override_color is not None:
-        colors_precomp = override_color
+        albedo_map, radii, allmap = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = override_color,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp
+        )
+        rendered_image = albedo_map
+        roughness_map = torch.zeros((2, albedo_map.shape[1], albedo_map.shape[2]), device="cuda")
+        metallic_map = torch.zeros((1, albedo_map.shape[1], albedo_map.shape[2]), device="cuda")
+        normal_map = allmap[2:5]
+        render_alpha = allmap[1:2]
     else:
-        colors_precomp = gbuffer_features
+        # Pass 1: Albedo (3 channels) + Geometry Normals (View space from allmap[2:5])
+        albedo_precomp = pc.get_base_color # [N, 3]
+        albedo_map, radii, allmap = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = albedo_precomp,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp
+        )
+        normal_map = allmap[2:5] # [3, H, W]
+        render_alpha = allmap[1:2] # [1, H, W]
 
-    rendered_gbuffer, radii, allmap = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp
-    )
+        # Pass 2: Material Attributes (2 channels roughness + 1 channel metallic = 3 channels)
+        mat_precomp = torch.cat([pc.get_roughness, pc.get_metallic], dim=-1) # [N, 3]
+        rendered_mat_features, _, _ = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = mat_precomp,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp
+        )
+        roughness_map = rendered_mat_features[0:2] # [2, H, W]
+        metallic_map = rendered_mat_features[2:3]  # [1, H, W]
 
-    # Extract 2D G-Buffer Maps
-    albedo_map = rendered_gbuffer[0:3]     # [3, H, W]
-    roughness_map = rendered_gbuffer[3:5]  # [2, H, W]
-    metallic_map = rendered_gbuffer[5:6]   # [1, H, W]
-    normal_map = allmap[2:5]               # [3, H, W] (View-space normal)
-    render_alpha = allmap[1:2]             # [1, H, W]
+        # Compute 2D Per-pixel Camera View Ray Direction Map in View Space
+        H, W = int(viewpoint_camera.image_height), int(viewpoint_camera.image_width)
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(-tanfovy, tanfovy, H, device="cuda"),
+            torch.linspace(-tanfovx, tanfovx, W, device="cuda"),
+            indexing="ij"
+        )
+        v_dir_cam = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0) # [3, H, W]
+        v_dir_cam = torch.nn.functional.normalize(v_dir_cam, dim=0)
 
-    # Compute 2D Per-pixel Camera View Ray Direction Map in View Space
-    H, W = int(viewpoint_camera.image_height), int(viewpoint_camera.image_width)
-    grid_y, grid_x = torch.meshgrid(
-        torch.linspace(-tanfovy, tanfovy, H, device="cuda"),
-        torch.linspace(-tanfovx, tanfovx, W, device="cuda"),
-        indexing="ij"
-    )
-    v_dir_cam = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=0) # [3, H, W]
-    v_dir_cam = torch.nn.functional.normalize(v_dir_cam, dim=0)
-
-    # 2. DEFERRED 2D IMAGE-SPACE PBR SHADER
-    if override_color is not None:
-        rendered_image = rendered_gbuffer[0:3]
-    else:
+        # 2. DEFERRED 2D IMAGE-SPACE PBR SHADER
         rendered_image = shade_deferred_anisotropic_ggx_2d(
             albedo_map = albedo_map,
             normal_map = normal_map,
