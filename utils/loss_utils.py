@@ -72,3 +72,53 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+def knn_3d_material_smoothness_loss(gaussians, k=5, sample_size=4096):
+    """
+    Computes 3D KNN Bilateral Material Smoothness Loss directly on 3D Gaussians.
+    gaussians: GaussianModel object containing get_xyz, get_base_color, get_roughness, get_metallic
+    k: Number of nearest 3D neighbors (default 5)
+    sample_size: Subsampled batch size for ultra-fast GPU computation (<0.5ms)
+    """
+    xyz = gaussians.get_xyz
+    num_pts = xyz.shape[0]
+    if num_pts <= k + 1:
+        return torch.tensor(0.0, device="cuda")
+
+    # Subsample indices for fast GPU cdist
+    if num_pts > sample_size:
+        indices = torch.randint(0, num_pts, (sample_size,), device="cuda")
+        xyz_sub = xyz[indices]
+        color_sub = gaussians.get_base_color[indices]
+        rough_sub = gaussians.get_roughness[indices]
+        metal_sub = gaussians.get_metallic[indices]
+    else:
+        xyz_sub = xyz
+        color_sub = gaussians.get_base_color
+        rough_sub = gaussians.get_roughness
+        metal_sub = gaussians.get_metallic
+
+    # Compute 3D pairwise Euclidean distances: [B, B]
+    dists = torch.cdist(xyz_sub, xyz_sub, p=2)
+
+    # Get top-k nearest 3D neighbors (excluding self at index 0)
+    top_dists, top_idxs = torch.topk(dists, k=k+1, largest=False, dim=-1)
+    knn_idxs = top_idxs[:, 1:]
+    knn_dists = top_dists[:, 1:]
+
+    # Bilateral Gaussian spatial distance weights
+    sigma = torch.mean(knn_dists).detach() + 1e-6
+    spatial_weights = torch.exp(-knn_dists / sigma).unsqueeze(-1)
+
+    # Gather material properties of nearest neighbors
+    color_neighbors = color_sub[knn_idxs]
+    rough_neighbors = rough_sub[knn_idxs]
+    metal_neighbors = metal_sub[knn_idxs]
+
+    # Compute weighted L1 differences
+    diff_color = (torch.abs(color_sub.unsqueeze(1) - color_neighbors) * spatial_weights).mean()
+    diff_rough = (torch.abs(rough_sub.unsqueeze(1) - rough_neighbors) * spatial_weights).mean()
+    diff_metal = (torch.abs(metal_sub.unsqueeze(1) - metal_neighbors) * spatial_weights).mean()
+
+    return diff_color + diff_rough + diff_metal
+
+
