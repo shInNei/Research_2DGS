@@ -130,10 +130,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
                 if iteration == opt.iterations:
+                    print("\n[ITER {}] Pruning floaters before final save...".format(iteration))
                     gaussians.prune_floaters_and_large_scales(min_opacity=0.02, extent=scene.cameras_extent)
+                print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+
 
 
             # Densification
