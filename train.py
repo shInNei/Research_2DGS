@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, image_guided_2d_material_smoothness_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -49,6 +49,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
+    ema_mat_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -78,6 +79,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # regularization (Normal Loss active after iter 7000, Distortion Loss active after iter 3000)
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+        lambda_mat = 0.005 if iteration > 1000 else 0.0
 
         rend_dist = render_pkg["rend_dist"]
         rend_normal  = render_pkg['rend_normal']
@@ -86,8 +88,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        # loss
-        total_loss = loss + dist_loss + normal_loss
+        # 2D Edge-guided Material Smoothness Loss
+        if lambda_mat > 0.0:
+            mat_loss = lambda_mat * (
+                image_guided_2d_material_smoothness_loss(render_pkg["albedo_map"], gt_image) +
+                image_guided_2d_material_smoothness_loss(render_pkg["roughness_map"], gt_image) +
+                image_guided_2d_material_smoothness_loss(render_pkg["metallic_map"], gt_image)
+            )
+        else:
+            mat_loss = torch.tensor(0.0, device="cuda")
+
+        # total loss
+        total_loss = loss + dist_loss + normal_loss + mat_loss
         
         total_loss.backward()
 
@@ -98,13 +110,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
+            ema_mat_for_log = 0.4 * mat_loss.item() + 0.6 * ema_mat_for_log
 
 
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
-                    "distort": f"{ema_dist_for_log:.{5}f}",
+                    "distort": f"{ema_dist_for_log:.{2}e}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
+                    "mat_smooth": f"{ema_mat_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)

@@ -72,3 +72,24 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+def image_guided_2d_material_smoothness_loss(material_map, gt_img, alpha=10.0):
+    """
+    Computes 2D edge-guided self-supervised smoothness loss on G-Buffer material maps.
+    material_map: [C, H, W] tensor (Albedo, Roughness, Metallic, Normal)
+    gt_img: [3, H, W] ground truth image
+    """
+    grad_mat_x = torch.abs(material_map[:, :, 1:] - material_map[:, :, :-1])
+    grad_mat_y = torch.abs(material_map[:, 1:, :] - material_map[:, :-1, :])
+
+    grad_gt_x = torch.mean(torch.abs(gt_img[:, :, 1:] - gt_img[:, :, :-1]), dim=0, keepdim=True)
+    grad_gt_y = torch.mean(torch.abs(gt_img[:, 1:, :] - gt_img[:, :-1, :]), dim=0, keepdim=True)
+
+    weight_x = torch.exp(-alpha * grad_gt_x)
+    weight_y = torch.exp(-alpha * grad_gt_y)
+
+    loss_x = (grad_mat_x * weight_x).mean()
+    loss_y = (grad_mat_y * weight_y).mean()
+
+    return loss_x + loss_y
+
+
