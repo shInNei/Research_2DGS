@@ -12,3 +12,7 @@ data
 eval
 *.npz
 **/tmp
+*.zip
+exps/
+venv/
+*.mp4
