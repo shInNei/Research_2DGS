@@ -120,7 +120,27 @@ def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
     normal_dot_dir = normal @ sg_dir.T # [N, M]
     cos_term = torch.clamp(normal_dot_dir, min=0.0)
     sg_integral = (2.0 * math.pi / sg_sharp.T) * (1.0 - torch.exp(-2.0 * sg_sharp.T)) # [1, M]
-    diffuse_light = (cos_term * sg_integral) @ sg_color # [N, 3]
+    
+    # Evaluate Visibility SH
+    from utils.sh_utils import eval_sh
+    vis_sh = torch.cat((pc.get_visibility_dc, pc.get_visibility_rest), dim=1) # [N, 16, 1]
+    # Evaluate for all M directions
+    # eval_sh takes degree, shs [N, 16, C], dirs [M, 3] or [N, 3]. Wait, eval_sh usually takes dirs [N, 3].
+    # But here we have M directions. We can loop or reshape.
+    # Actually, it's easier to just do it manually or loop.
+    # Let's reshape: vis_sh is [N, 16, 1], sg_dir is [M, 3].
+    # We can evaluate SH for each direction.
+    visibility = torch.ones((vis_sh.shape[0], sg_dir.shape[0]), dtype=torch.float32, device="cuda")
+    vis_degree = int(torch.sqrt(torch.tensor(vis_sh.shape[1], dtype=torch.float32)).item()) - 1
+    for m in range(sg_dir.shape[0]):
+        d = sg_dir[m:m+1, :].repeat(vis_sh.shape[0], 1)
+        v = eval_sh(vis_degree, vis_sh, d) # [N, 1]
+        visibility[:, m] = v.squeeze(-1)
+    
+    visibility = torch.sigmoid(visibility) # [N, M]
+    
+    # Apply visibility to the light source before convolution!
+    diffuse_light = (cos_term * sg_integral * visibility) @ sg_color # [N, 3]
     
     diffuse = albedo * (1.0 - metallic) * diffuse_light
     
@@ -140,6 +160,7 @@ def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
     exp_factor = torch.clamp(exp_factor, min=-40.0, max=0.0)
     
     spec_intensity = (2.0 * math.pi / lambda_total) * torch.exp(exp_factor) # [N, M]
+    spec_intensity = spec_intensity * visibility # Apply visibility!
     specular_light = spec_intensity @ sg_color # [N, 3]
     
     # Lazarov/UE4 Split-Sum envBRDF approximation
@@ -158,7 +179,15 @@ def shade_anisotropic_ggx_sg_point(pc, v_dir, n):
     
     specular = specular_light * (F_0 * scale + bias)
     
-    shaded_colors = diffuse + specular
+    # Evaluate Ambient SH
+    amb_sh = torch.cat((pc.get_ambient_dc, pc.get_ambient_rest), dim=1) # [N, 16, 3]
+    amb_degree = int(torch.sqrt(torch.tensor(amb_sh.shape[1], dtype=torch.float32)).item()) - 1
+    ambient_light = eval_sh(amb_degree, amb_sh, v_dir) # View dependent ambient!
+    ambient_light = torch.sigmoid(ambient_light) * 0.4
+    
+    diffuse_indirect = albedo * (1.0 - metallic) * ambient_light
+    
+    shaded_colors = diffuse + specular + diffuse_indirect
     return torch.clamp(shaded_colors, 0.0, 1.0)
 
 def shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, sg_dir, sg_sharp, sg_color):
@@ -184,7 +213,18 @@ def shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, sg_dir, sg_sharp, sg_co
     normal_dot_dir = normal @ sg_dir.T
     cos_term = torch.clamp(normal_dot_dir, min=0.0)
     sg_integral = (2.0 * math.pi / sg_sharp.T) * (1.0 - torch.exp(-2.0 * sg_sharp.T))
-    diffuse_light = (cos_term * sg_integral) @ sg_color
+    
+    from utils.sh_utils import eval_sh
+    vis_sh = torch.cat((pc.get_visibility_dc, pc.get_visibility_rest), dim=1)
+    visibility = torch.ones((vis_sh.shape[0], sg_dir.shape[0]), dtype=torch.float32, device="cuda")
+    vis_degree = int(torch.sqrt(torch.tensor(vis_sh.shape[1], dtype=torch.float32)).item()) - 1
+    for m in range(sg_dir.shape[0]):
+        d = sg_dir[m:m+1, :].repeat(vis_sh.shape[0], 1)
+        v = eval_sh(vis_degree, vis_sh, d)
+        visibility[:, m] = v.squeeze(-1)
+    visibility = torch.sigmoid(visibility)
+    
+    diffuse_light = (cos_term * sg_integral * visibility) @ sg_color
     
     diffuse = albedo * (1.0 - metallic) * diffuse_light
     
@@ -200,6 +240,7 @@ def shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, sg_dir, sg_sharp, sg_co
     exp_factor = torch.clamp(exp_factor, min=-40.0, max=0.0)
     
     spec_intensity = (2.0 * math.pi / lambda_total) * torch.exp(exp_factor)
+    spec_intensity = spec_intensity * visibility
     specular_light = spec_intensity @ sg_color
     
     F_0 = 0.04 * (1.0 - metallic) + albedo * metallic
@@ -216,7 +257,15 @@ def shade_anisotropic_ggx_sg_point_with_sg(pc, v_dir, n, sg_dir, sg_sharp, sg_co
     
     specular = specular_light * (F_0 * scale + bias)
     
-    shaded_colors = diffuse + specular
+    # Evaluate Ambient SH
+    amb_sh = torch.cat((pc.get_ambient_dc, pc.get_ambient_rest), dim=1) # [N, 16, 3]
+    amb_degree = int(torch.sqrt(torch.tensor(amb_sh.shape[1], dtype=torch.float32)).item()) - 1
+    ambient_light = eval_sh(amb_degree, amb_sh, v_dir) # View dependent ambient!
+    ambient_light = torch.sigmoid(ambient_light) * 0.4
+    
+    diffuse_indirect = albedo * (1.0 - metallic) * ambient_light
+    
+    shaded_colors = diffuse + specular + diffuse_indirect
     return torch.clamp(shaded_colors, 0.0, 1.0)
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, override_sg = None):

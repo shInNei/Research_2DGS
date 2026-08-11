@@ -1,0 +1,11 @@
+LICENCE
+README.md
+setup.py
+E:/Learning_material/relightable2DGS/submodules/bvh/src/bindings.cpp
+E:/Learning_material/relightable2DGS/submodules/bvh/src/bvh.cu
+E:/Learning_material/relightable2DGS/submodules/bvh/src/construct.cu
+E:/Learning_material/relightable2DGS/submodules/bvh/src/trace.cu
+bvh_tracing.egg-info/PKG-INFO
+bvh_tracing.egg-info/SOURCES.txt
+bvh_tracing.egg-info/dependency_links.txt
+bvh_tracing.egg-info/top_level.txt
